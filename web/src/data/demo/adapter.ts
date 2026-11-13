@@ -1,0 +1,458 @@
+// In-browser demo implementation of PortalApi. No network. State lives in memory and is
+// saved to localStorage under one key (every storage call is wrapped in try/catch, so it
+// also works when storage is blocked). It follows the same rules as the real system:
+// balances come from summarizeBalance, a second person must confirm a check deposit,
+// records requests get a 10-business-day clock, board calls are refused for owners.
+import type { LotRow, PortalApi } from '../api';
+import type {
+  Announcement, Audience, BalanceSummary, BillRunPreview, BoardDashboard, BoardTask, CheckRecord,
+  ClaimRequest, DocumentFolder, DocumentItem, EventKind, HoaEvent, LedgerEntry, Message,
+  MessageTopic, Owner, OwnerHome, ReplyTemplate, Session,
+} from '../types';
+import { addBusinessDays, businessDaysBetween, formatCents, summarizeBalance } from '../../lib/ledger';
+import {
+  DEMO_CLAIM_CODE, DEMO_NOW, PAT_LOT_NUMBER, PAT_USER, SAM_USER, createSeed,
+  type DemoState, type Persona,
+} from './seed';
+
+export { DEMO_CLAIM_CODE, DEMO_NOW };
+export type { Persona };
+
+const STORAGE_KEY = 'hoa-portal-demo-v1';
+
+export interface DemoOptions {
+  persona?: Persona;
+  latencyMs?: number;          // default 150; use 0 in tests
+  now?: string;                // ISO time; default is the frozen demo clock
+  checkLoggerUserId?: string;  // who logCheck records as; default "Sam (secretary)"
+}
+
+const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+
+function loadState(): DemoState | null {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as DemoState;
+    return parsed && Array.isArray(parsed.lots) && Array.isArray(parsed.ledger) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveState(state: DemoState): void {
+  try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch { /* storage blocked: stay in memory */ }
+}
+
+function clearStorage(): void {
+  try { window.localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+}
+
+// The most recently created demo API, so the toolbar helpers below can reach it.
+interface Controller { setPersona(p: Persona): void; reset(): void }
+let active: Controller | null = null;
+
+function announceChange() {
+  try { window.dispatchEvent(new Event('demo-state-change')); } catch { /* no window */ }
+}
+
+export function demoSwitchPersona(p: Persona): void {
+  if (active) { active.setPersona(p); return; }
+  const s = loadState() ?? createSeed();
+  s.persona = p;
+  saveState(s);
+  announceChange();
+}
+
+export function demoReset(): void {
+  if (active) { active.reset(); return; }
+  clearStorage();
+  announceChange();
+}
+
+export function createDemoApi(opts: DemoOptions = {}): PortalApi {
+  const latency = opts.latencyMs ?? 150;
+  const nowISO = () => opts.now ?? DEMO_NOW;
+  const loggerUser = opts.checkLoggerUserId ?? SAM_USER;
+
+  let state: DemoState = loadState() ?? createSeed();
+  if (opts.persona) state.persona = opts.persona;
+
+  const save = () => saveState(state);
+  active = {
+    setPersona(p) { state.persona = p; save(); announceChange(); },
+    reset() { clearStorage(); state = createSeed(); announceChange(); },
+  };
+
+  const wait = () => (latency > 0 ? new Promise<void>((r) => setTimeout(r, latency)) : Promise.resolve());
+  const newId = (prefix: string) => `${prefix}-demo-${state.seq++}`;
+
+  // ---- helpers ----
+  const signedIn = () => state.persona !== 'signed_out';
+  const isBoard = () => state.persona === 'board';
+  const requireSignedIn = () => { if (!signedIn()) throw new Error('Please sign in first.'); };
+  const requireBoard = () => { if (!isBoard()) throw new Error('This page is for board members only.'); };
+  const myLot = () => state.lots.find((l) => l.lot_number === PAT_LOT_NUMBER)!;
+  const lotEntries = (lotId: string) => state.ledger.filter((e) => e.lot_id === lotId);
+  const lotInvoices = (lotId: string) => state.invoices.filter((i) => i.lot_id === lotId);
+  const balanceOf = (lotId: string): BalanceSummary => summarizeBalance(lotEntries(lotId), lotInvoices(lotId));
+  const ownersOf = (lotId: string): Owner[] =>
+    state.lot_owners.filter((lo) => lo.lot_id === lotId && !lo.ends_on)
+      .map((lo) => state.owners.find((o) => o.id === lo.owner_id)!).filter(Boolean);
+  const me = () => state.owners.find((o) => o.user_id === PAT_USER)!;
+  const boardMember = () => state.board.find((b) => b.user_id === PAT_USER && b.active) ?? null;
+  const canSee = (a: Audience) => a === 'public' || (a === 'owners' && signedIn()) || (a === 'board' && isBoard());
+
+  function session(): Session | null {
+    if (!signedIn()) return null;
+    const owner = me();
+    return {
+      user_id: PAT_USER, email: owner.email ?? 'pat.example@example.com',
+      owner: clone(owner), lot: clone(myLot()), board: isBoard() ? clone(boardMember()) : null,
+    };
+  }
+
+  function addTask(t: Omit<BoardTask, 'id' | 'status' | 'created_at' | 'resolved_by' | 'resolved_at'>): BoardTask {
+    const task: BoardTask = { ...t, id: newId('task'), status: 'open', created_at: nowISO(), resolved_by: null, resolved_at: null };
+    state.tasks.push(task);
+    return task;
+  }
+
+  function finishTasksFor(refId: string, by: string) {
+    for (const t of state.tasks) {
+      if (t.ref_id === refId && t.status === 'open') { t.status = 'done'; t.resolved_by = by; t.resolved_at = nowISO(); }
+    }
+  }
+
+  function markAnswered(m: Message) {
+    m.status = 'answered'; m.answered_at = nowISO(); m.assigned_to = PAT_USER;
+    finishTasksFor(m.id, PAT_USER);
+  }
+
+  function confirmCheck(checkId: string, outcome: 'deposited' | 'returned'): CheckRecord {
+    requireBoard();
+    const check = state.checks.find((c) => c.id === checkId);
+    if (!check) throw new Error('That check was not found.');
+    if (check.state !== 'received') throw new Error('That check has already been confirmed.');
+    // Two-person rule: the person who opened the mail cannot also confirm the deposit.
+    if (check.logged_by === PAT_USER) {
+      throw new Error('The person who logged this check cannot also confirm the deposit. Ask a second board member to confirm it.');
+    }
+    check.state = outcome;
+    check.deposit_confirmed_by = PAT_USER;
+    const entry: LedgerEntry = {
+      id: newId('le'), lot_id: check.lot_id, posted_on: nowISO().slice(0, 10), kind: 'payment',
+      description: `Check #${check.check_number}`,
+      detail: outcome === 'deposited' ? 'Deposit confirmed' : 'Not on the deposit',
+      amount_cents: -check.amount_cents, status: outcome === 'deposited' ? 'cleared' : 'returned',
+      method: 'check', invoice_id: null, external_ref: check.check_number,
+    };
+    state.ledger.push(entry);
+    if (outcome === 'deposited') {
+      const summary = balanceOf(check.lot_id);
+      if (summary.balance_cents <= 0) {
+        for (const inv of state.invoices) {
+          if (inv.lot_id === check.lot_id && (inv.status === 'open' || inv.status === 'processing')) {
+            inv.status = 'paid'; inv.paid_outside_stripe = true;
+          }
+        }
+      }
+    } else {
+      addTask({ kind: 'payment_returned', lot_id: check.lot_id, title: `Check #${check.check_number} was not on the deposit`, summary: 'The lot shows unpaid again. Contact the owner.', due_at: null, ref_id: check.id });
+    }
+    finishTasksFor(check.id, PAT_USER);
+    return clone(check);
+  }
+
+  function useTemplate(messageId: string, templateId: string): Message {
+    const m = state.messages.find((x) => x.id === messageId);
+    if (!m) throw new Error('That message was not found.');
+    const t = state.templates.find((x) => x.id === templateId);
+    if (!t) throw new Error('That template was not found.');
+    if (!t.approved_on) throw new Error('Only board-approved templates can be sent.');
+    markAnswered(m);
+    return clone(m);
+  }
+
+  // ---- the API ----
+  return {
+    async getSession() { await wait(); return session(); },
+
+    async signInWithGoogle() {
+      await wait();
+      if (state.persona === 'signed_out') { state.persona = 'owner'; save(); }
+    },
+
+    async sendSignInLink(email: string) {
+      await wait();
+      void email; // the demo never says whether an address is on the roster
+      if (state.persona === 'signed_out') { state.persona = 'owner'; save(); }
+      return { sent: true as const };
+    },
+
+    async redeemClaimCode(code: string) {
+      await wait();
+      requireSignedIn();
+      const clean = code.trim().toUpperCase();
+      if (clean !== DEMO_CLAIM_CODE) return { ok: false, message: 'That code did not work. Check it and try again, or message the board.' };
+      if (state.used_codes.includes(clean)) return { ok: false, message: 'That code has already been used. Message the board if you need a new one.' };
+      state.used_codes.push(clean);
+      const lot = myLot();
+      const claim: ClaimRequest = { id: newId('claim'), lot_id: lot.id, email: session()!.email, created_at: nowISO(), status: 'pending' };
+      state.claims.push(claim);
+      addTask({ kind: 'claim_attach', lot_id: lot.id, title: `Confirm email for Lot ${lot.lot_number}`, summary: `${claim.email} used a claim code for Lot ${lot.lot_number}. Confirm it is the owner.`, due_at: null, ref_id: claim.id });
+      save();
+      return { ok: true, message: 'Thank you. The board will confirm your email for this lot, usually within a few days.' };
+    },
+
+    async signOut() { await wait(); state.persona = 'signed_out'; save(); },
+
+    async getOwnerHome(): Promise<OwnerHome> {
+      await wait(); requireSignedIn();
+      const lot = myLot();
+      const next = state.events.filter((e) => e.starts_at >= nowISO()).sort((a, b) => a.starts_at.localeCompare(b.starts_at))[0] ?? null;
+      const docs = state.documents.filter((d) => canSee(d.audience) && !d.is_draft)
+        .sort((a, b) => b.posted_on.localeCompare(a.posted_on)).slice(0, 3);
+      const anns = state.announcements.filter((a) => canSee(a.audience)).sort((a, b) => b.posted_at.localeCompare(a.posted_at));
+      return clone({ session: session()!, balance: balanceOf(lot.id), next_event: next, announcements: anns, new_documents: docs });
+    },
+
+    async getMyLedger() {
+      await wait(); requireSignedIn();
+      const lot = myLot();
+      const entries = lotEntries(lot.id).sort((a, b) => b.posted_on.localeCompare(a.posted_on));
+      const invoices = lotInvoices(lot.id).sort((a, b) => b.due_on.localeCompare(a.due_on));
+      return clone({ entries, invoices });
+    },
+
+    async getPayLink(invoiceId: string) {
+      await wait(); requireSignedIn();
+      const inv = state.invoices.find((i) => i.id === invoiceId && i.lot_id === myLot().id);
+      if (!inv) throw new Error('That invoice was not found.');
+      if (inv.status === 'open') {
+        // In the demo a pay link instantly starts a bank payment that is still processing.
+        inv.status = 'processing';
+        state.ledger.push({
+          id: newId('le'), lot_id: inv.lot_id, posted_on: nowISO().slice(0, 10), kind: 'payment',
+          description: 'Bank payment', detail: 'Ending 6789', amount_cents: -inv.amount_cents,
+          status: 'processing', method: 'ach', invoice_id: inv.id, external_ref: null,
+        });
+        save();
+      }
+      return '#/paid?demo=1';
+    },
+
+    async listDocuments() {
+      await wait();
+      return clone(state.documents.filter((d) => canSee(d.audience)).sort((a, b) => b.posted_on.localeCompare(a.posted_on)));
+    },
+
+    async openDocument(id: string) {
+      await wait();
+      const d = state.documents.find((x) => x.id === id);
+      if (!d || !canSee(d.audience)) throw new Error('That document was not found.');
+      const text = `${d.title}\n\nThis is a sample document for the demo. In the real portal this opens the actual file through a short-lived private link.\n`;
+      return `data:text/plain;charset=utf-8,${encodeURIComponent(text)}`;
+    },
+
+    async listEvents() {
+      await wait();
+      return clone(state.events.filter((e) => signedIn() || e.is_public).sort((a, b) => a.starts_at.localeCompare(b.starts_at)));
+    },
+
+    async sendMessage(input: { topic: MessageTopic; body: string }) {
+      await wait(); requireSignedIn();
+      const body = input.body.trim();
+      if (!body) throw new Error('Please write a message first.');
+      const lot = myLot();
+      const m: Message = {
+        id: newId('msg'), lot_id: lot.id, owner_id: me().id, topic: input.topic,
+        subject: body.length > 60 ? `${body.slice(0, 57)}...` : body, body, status: 'acknowledged',
+        created_at: nowISO(), answered_at: null,
+        due_at: input.topic === 'records' ? addBusinessDays(nowISO(), 10) : null,
+        gmail_thread_id: null, assigned_to: null, channel: 'portal',
+      };
+      state.messages.push(m);
+      if (m.topic === 'records') {
+        addTask({ kind: 'records_request', lot_id: lot.id, title: m.subject, summary: 'Virginia allows 10 business days to respond.', due_at: m.due_at, ref_id: m.id });
+      }
+      save();
+      return clone(m);
+    },
+
+    async listMyMessages() {
+      await wait(); requireSignedIn();
+      return clone(state.messages.filter((m) => m.lot_id === myLot().id).sort((a, b) => b.created_at.localeCompare(a.created_at)));
+    },
+
+    async updateNoticePrefs(input) {
+      await wait(); requireSignedIn();
+      const o = me();
+      if (input.email_notice_consent && !o.email_notice_consent) o.email_notice_consent_at = nowISO();
+      if (!input.email_notice_consent) o.email_notice_consent_at = null;
+      o.email_notice_consent = input.email_notice_consent;
+      o.board_notice_request = input.board_notice_request;
+      save();
+      return clone(o);
+    },
+
+    // ---- Board ----
+    async getBoardDashboard(): Promise<BoardDashboard> {
+      await wait(); requireBoard();
+      const weekAgo = new Date(new Date(nowISO()).getTime() - 7 * 86400000).toISOString();
+      const week = state.messages.filter((m) => m.created_at >= weekAgo);
+      const waiting = week.filter((m) => m.status !== 'answered' && m.status !== 'closed');
+      const oldest = waiting.reduce((mx, m) => Math.max(mx, businessDaysBetween(m.created_at, nowISO())), 0);
+      const paid = state.lots.filter((l) => { const s = balanceOf(l.id).state; return s === 'paid' || s === 'credit'; }).length;
+      return clone({
+        lots_total: state.lots.length, lots_paid: paid,
+        owners_signed_in: state.owners.filter((o) => o.user_id).length,
+        open_tasks: state.tasks.filter((t) => t.status === 'open'),
+        messages_this_week: { received: week.length, answered: week.filter((m) => m.answered_at).length, waiting: waiting.length, oldest_waiting_business_days: oldest },
+      });
+    },
+
+    async listTasks() {
+      await wait(); requireBoard();
+      const open = state.tasks.filter((t) => t.status === 'open');
+      const closed = state.tasks.filter((t) => t.status !== 'open');
+      return clone([...open, ...closed]);
+    },
+
+    async resolveTask(id, action, note) {
+      await wait(); requireBoard();
+      const task = state.tasks.find((t) => t.id === id);
+      if (!task) throw new Error('That task was not found.');
+      if (task.status !== 'open') throw new Error('That task is already closed.');
+      if (action === 'dismiss') {
+        task.status = 'dismissed';
+      } else if (task.kind === 'check_confirm') {
+        // approve = it is on the deposit; reject = not on the deposit. May throw (two-person rule).
+        confirmCheck(task.ref_id!, action === 'approve' ? 'deposited' : 'returned');
+        task.status = action === 'approve' ? 'done' : 'dismissed';
+      } else if (action === 'reject') {
+        task.status = 'dismissed';
+        const claim = task.kind === 'claim_attach' ? state.claims.find((c) => c.id === task.ref_id) : null;
+        if (claim) claim.status = 'rejected';
+      } else {
+        const m = state.messages.find((x) => x.id === task.ref_id);
+        if (task.kind === 'template_reply' && m) useTemplate(m.id, 'tpl-meeting');
+        else if ((task.kind === 'draft_approval' || task.kind === 'records_request') && m) markAnswered(m);
+        if (task.kind === 'claim_attach') {
+          const claim = state.claims.find((c) => c.id === task.ref_id);
+          if (claim) {
+            claim.status = 'approved';
+            const owner = ownersOf(claim.lot_id)[0];
+            if (owner) owner.email = claim.email;
+          }
+        }
+        task.status = 'done';
+      }
+      task.resolved_by = PAT_USER; task.resolved_at = nowISO();
+      if (note) task.summary = `${task.summary} Note: ${note}`;
+      save();
+      return clone(task);
+    },
+
+    async listLots(query?: string): Promise<LotRow[]> {
+      await wait(); requireBoard();
+      const q = (query ?? '').trim().toLowerCase();
+      const rows = state.lots.map((lot) => {
+        const owners = ownersOf(lot.id);
+        const b = balanceOf(lot.id);
+        return { lot, owners, balance_cents: b.balance_cents, state: b.state };
+      }).filter((r) => !q
+        || String(r.lot.lot_number) === q || r.lot.street_address.toLowerCase().includes(q)
+        || r.owners.some((o) => o.full_name.toLowerCase().includes(q) || (o.email ?? '').toLowerCase().includes(q)));
+      return clone(rows);
+    },
+
+    async listInbox(filter) {
+      await wait(); requireBoard();
+      return clone(state.messages
+        .filter((m) => (!filter?.status || m.status === filter.status) && (!filter?.topic || m.topic === filter.topic))
+        .sort((a, b) => b.created_at.localeCompare(a.created_at)));
+    },
+
+    async listTemplates(): Promise<ReplyTemplate[]> {
+      await wait(); requireBoard();
+      return clone(state.templates);
+    },
+
+    async replyWithTemplate(messageId, templateId) {
+      await wait(); requireBoard();
+      const m = useTemplate(messageId, templateId);
+      save();
+      return m;
+    },
+
+    async logCheck(input) {
+      await wait(); requireBoard();
+      if (!state.lots.some((l) => l.id === input.lot_id)) throw new Error('That lot was not found.');
+      if (!(input.amount_cents > 0)) throw new Error('Enter the check amount.');
+      const check: CheckRecord = {
+        id: newId('chk'), lot_id: input.lot_id, check_number: input.check_number, amount_cents: input.amount_cents,
+        received_on: input.received_on, logged_by: loggerUser, deposit_confirmed_by: null, state: 'received',
+      };
+      state.checks.push(check);
+      const lot = state.lots.find((l) => l.id === input.lot_id)!;
+      addTask({ kind: 'check_confirm', lot_id: lot.id, title: `Check #${check.check_number} for ${formatCents(check.amount_cents)}`, summary: `Logged by the secretary on ${check.received_on}. A second board member confirms it is on the bank deposit before Lot ${lot.lot_number} shows Paid.`, due_at: null, ref_id: check.id });
+      save();
+      return clone(check);
+    },
+
+    async confirmCheckDeposit(checkId, outcome) {
+      await wait();
+      const c = confirmCheck(checkId, outcome);
+      save();
+      return c;
+    },
+
+    async previewBillRun(input): Promise<BillRunPreview> {
+      await wait(); requireBoard();
+      const yearInvoiceIds = new Set(state.invoices.filter((i) => i.number.startsWith(`${input.year}-`)).map((i) => i.id));
+      const lots: BillRunPreview['lots'] = [];
+      let email = 0; let paper = 0; let billed = 0;
+      for (const lot of state.lots) {
+        const owners = ownersOf(lot.id);
+        const owner = owners[0];
+        // Carried = what the lot already owes, not counting this year's own invoice and its payments.
+        const carriedEntries = lotEntries(lot.id).filter((e) => !(e.invoice_id && yearInvoiceIds.has(e.invoice_id)));
+        const carried = summarizeBalance(carriedEntries, []).balance_cents;
+        const delivery = owner?.email_notice_consent && owner.email ? 'email' : 'paper';
+        const total = carried + input.amount_cents;
+        lots.push({ lot_id: lot.id, lot_number: lot.lot_number, owner_name: owners.map((o) => o.full_name).join(' and '), carried_cents: carried, total_cents: total, delivery });
+        if (delivery === 'email') email++; else paper++;
+        billed += total;
+      }
+      return { year: input.year, due_on: input.due_on, amount_cents: input.amount_cents, lots, totals: { lots: lots.length, email, paper, billed_cents: billed } };
+    },
+
+    async postAnnouncement(input): Promise<Announcement> {
+      await wait(); requireBoard();
+      const a: Announcement = { id: newId('ann'), title: input.title, body: input.body, audience: input.audience, posted_at: nowISO() };
+      state.announcements.push(a); save();
+      return clone(a);
+    },
+
+    async addDocument(input: { folder: DocumentFolder; title: string; audience: Audience; file: File | null; is_draft: boolean }): Promise<DocumentItem> {
+      await wait(); requireBoard();
+      const id = newId('doc');
+      const d: DocumentItem = { id, folder: input.folder, title: input.title, audience: input.audience, is_draft: input.is_draft, posted_on: nowISO().slice(0, 10), storage_path: `demo/${input.folder}/${id}.pdf` };
+      state.documents.push(d); save();
+      return clone(d);
+    },
+
+    async addEvent(input: { title: string; kind: EventKind; starts_at: string; location: string | null; video_url: string | null; is_public: boolean }): Promise<HoaEvent> {
+      await wait(); requireBoard();
+      const e: HoaEvent = { id: newId('ev'), notes: null, ...input };
+      state.events.push(e); save();
+      return clone(e);
+    },
+
+    async listClaimRequests() {
+      await wait(); requireBoard();
+      return clone(state.claims);
+    },
+  };
+}
