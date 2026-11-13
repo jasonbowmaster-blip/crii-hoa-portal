@@ -5,7 +5,7 @@ import { useSession } from '../../session';
 import ContactFooter from '../../components/ContactFooter';
 
 export default function ClaimCode() {
-  const { refresh } = useSession();
+  const { session, loading, refresh } = useSession();
   const [code, setCode] = useState('');
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -20,6 +20,21 @@ export default function ClaimCode() {
       if (r.ok) await refresh();
     } catch { setResult({ ok: false, message: 'We could not check that code. Please try again.' }); }
     finally { setBusy(false); }
+  }
+
+  if (loading) return <main className="page" aria-busy="true"><p className="sub">Loading…</p></main>;
+
+  // The code can only be linked to a sign-in, so signed-out visitors are sent to sign in first and come straight back here.
+  if (!session) {
+    return (
+      <main className="page">
+        <h1 className="title">Enter your code</h1>
+        <p className="sub">Every home’s letter has a one-time code. Entering it links your sign-in to your home. First, sign in with any email or Google account you like; you will come right back to this step.</p>
+        <Link to="/sign-in?next=%2Fclaim" className="btn btn--primary btn--block">Sign in, then enter my code</Link>
+        <Link to="/sign-in">Back to sign in</Link>
+        <ContactFooter />
+      </main>
+    );
   }
 
   return (

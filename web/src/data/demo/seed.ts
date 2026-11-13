@@ -222,9 +222,11 @@ function buildTasks(): BoardTask[] {
     ({ status: 'open', due_at: null, resolved_by: null, resolved_at: null, ...x });
   return [
     t({ id: 'task-chk', kind: 'check_confirm', lot_id: lotId(23), title: 'Check #1042 for $175.00', summary: 'Logged by the secretary on Jan 11. A second board member confirms it is on the bank deposit before Lot 23 shows Paid.', created_at: '2027-01-11T16:00:00Z', ref_id: 'chk-1042' }),
-    t({ id: 'task-q61', kind: 'template_reply', lot_id: lotId(61), title: 'When is the next board meeting?', summary: 'Suggested template: Meeting times. Fills in the next date and link from the calendar.', created_at: '2027-01-12T21:00:00Z', ref_id: 'msg-61' }),
-    t({ id: 'task-b88', kind: 'draft_approval', lot_id: lotId(88), title: 'Asks to split dues into two payments', summary: 'Draft reply offers the board-approved two-payment option.', created_at: '2027-01-12T18:05:00Z', ref_id: 'msg-88' }),
-    t({ id: 'task-r5', kind: 'records_request', lot_id: lotId(5), title: 'Wants last year’s bank statements', summary: 'Virginia allows 10 business days. Draft lists what we will share and the copy fee schedule.', created_at: '2027-01-11T15:05:00Z', ref_id: 'msg-5', due_at: addBusinessDays('2027-01-11T15:00:00Z', 10) }),
+    t({ id: 'task-q61', kind: 'template_reply', lot_id: lotId(61), title: 'When is the next board meeting?', summary: 'Suggested template: Meeting times. Fills in the next date and link from the calendar.', created_at: '2027-01-12T21:00:00Z', ref_id: 'msg-61', template_id: 'tpl-meeting' }),
+    t({ id: 'task-b88', kind: 'draft_approval', lot_id: lotId(88), title: 'Asks to split dues into two payments', summary: 'Draft reply offers the board-approved two-payment option.', created_at: '2027-01-12T18:05:00Z', ref_id: 'msg-88',
+      draft_body: `Thank you for asking. The board has approved paying the annual assessment in two equal payments, the first by May 15 and the second by August 15, with no late fee while both are on time. Reply to this message to accept and we will update your bill. Board of ${config.hoaName}` }),
+    t({ id: 'task-r5', kind: 'records_request', lot_id: lotId(5), title: 'Wants last year’s bank statements', summary: 'Virginia allows 10 business days. Draft lists what we will share and the copy fee schedule.', created_at: '2027-01-11T15:05:00Z', ref_id: 'msg-5', due_at: addBusinessDays('2027-01-11T15:00:00Z', 10),
+      draft_body: `We received your records request on January 11. The association will make last year’s bank statements available for inspection or copying within 10 business days, as Virginia law allows. Copies are charged at actual cost; the fee schedule is attached. Board of ${config.hoaName}` }),
   ];
 }
 

@@ -6,6 +6,9 @@ import Page from '../../components/Page';
 import StatusPill from '../../components/StatusPill';
 import ContactFooter from '../../components/ContactFooter';
 import { daysAgo, shortDate } from '../../components/dates';
+import { openWhenReady } from '../../lib/openWindow';
+
+const count = (n: number) => `${n} ${n === 1 ? 'document' : 'documents'}`;
 
 export default function Documents() {
   const { data, error, loading } = useAsync(() => getApi().listDocuments());
@@ -17,7 +20,7 @@ export default function Documents() {
 
   async function open(d: DocumentItem) {
     setOpenError(null);
-    try { window.open(await getApi().openDocument(d.id), '_blank', 'noopener'); }
+    try { await openWhenReady(() => getApi().openDocument(d.id)); }
     catch { setOpenError('We could not open that document. Please try again.'); }
   }
 
@@ -67,7 +70,7 @@ export default function Documents() {
             {folders.map((f) => (
               <button key={f} type="button" className="tile" onClick={() => setFolder(f)} style={{ cursor: 'pointer', textAlign: 'left' }}>
                 {FOLDER_LABELS[f]}
-                <span className="row__meta">{docs.filter((d) => d.folder === f).length} documents</span>
+                <span className="row__meta">{count(docs.filter((d) => d.folder === f).length)}</span>
               </button>
             ))}
           </div>

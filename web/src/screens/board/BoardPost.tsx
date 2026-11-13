@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import type { FormEvent } from 'react';
 import { getApi } from '../../data/api';
 import { FOLDER_LABELS } from '../../data/types';
@@ -60,11 +61,13 @@ function DocumentForm() {
   const [audience, setAudience] = useState<Audience>('owners');
   const [draft, setDraft] = useState(false);
   const [file, setFile] = useState<File | null>(null);
+  const [fileKey, setFileKey] = useState(0);   // changing the key remounts the file input, which clears the chosen name
   async function submit(e: FormEvent) {
     e.preventDefault(); r.setOk(''); r.setErr('');
+    if (!file) { r.setErr('Choose a file to upload.'); return; }
     try {
       await getApi().addDocument({ folder, title: title.trim(), audience, file, is_draft: draft });
-      r.setOk('Document added.'); setTitle(''); setFile(null);
+      r.setOk('Document added.'); setTitle(''); setFile(null); setFileKey((k) => k + 1);
     } catch (x) { r.setErr(errorText(x)); }
   }
   return (
@@ -82,7 +85,7 @@ function DocumentForm() {
         </select>
       </label>
       <label className="board-check"><input type="checkbox" checked={draft} onChange={(e) => setDraft(e.target.checked)} /> This is a draft (owners see it marked Draft; choose Board only to hide it)</label>
-      <label className="field">File<input className="input" type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
+      <label className="field">File<input key={fileKey} className="input" type="file" required onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
       <button type="submit" className="btn btn--primary">Add document</button>
       <Result r={r} />
     </form>
@@ -127,6 +130,13 @@ function EventForm() {
 }
 
 export default function BoardPost() {
+  // The Overview tiles link to a form (#h-ann, #h-doc); bring that form into view on a phone.
+  const { hash } = useLocation();
+  useEffect(() => {
+    if (!hash) return;
+    const el = document.getElementById(hash.slice(1));
+    el?.scrollIntoView?.({ block: 'start' });
+  }, [hash]);
   return (
     <main className="page">
       <BoardHeader title="Post" />

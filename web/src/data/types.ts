@@ -182,6 +182,8 @@ export interface BoardTask {
   created_at: ISOTime;
   due_at: ISOTime | null;
   ref_id: string | null;       // message / check / claim id
+  draft_body?: string | null;  // reply tasks: the exact text that will go to the owner, so the board can read it first
+  template_id?: string | null; // template_reply tasks: the template that would be sent
   resolved_by: string | null;
   resolved_at: ISOTime | null;
 }

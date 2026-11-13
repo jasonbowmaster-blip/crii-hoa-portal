@@ -1,4 +1,4 @@
-.board-nav { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
+.board-nav { display: flex; flex-wrap: wrap; gap: 8px; }   /* wraps onto a second row on a phone: every section stays visible */
 .board-nav a { flex: 0 0 auto; display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text-2); font-size: 15px; font-weight: 600; text-decoration: none; white-space: nowrap; }
 .board-nav a[aria-current="page"] { border: 2px solid var(--brand); background: var(--brand-tint); color: var(--brand-dark); }
 .eyebrow--board { color: var(--warn); }
@@ -14,3 +14,19 @@
 .board-form { display: flex; flex-direction: column; gap: 12px; }
 .board-check { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 15px; font-weight: 600; }
 .board-check input { width: 22px; height: 22px; }
+.board-confirm { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 2px solid var(--brand); border-radius: var(--radius-sm); background: var(--brand-tint); }
+.board-quote { margin: 0; padding: 10px 12px; font-size: 16px; line-height: 1.5; background: var(--surface); border-left: 4px solid var(--brand); border-radius: 8px; white-space: pre-wrap; }
+.board-warn-note { margin: 0; font-size: 15px; font-weight: 600; color: var(--warn); }
+/* Lots table: on a phone each lot is a stacked card, so Balance and State are never pushed off-screen. */
+@media (max-width: 640px) {
+  .lots-card { padding: 0 12px; }
+  table.data--stack, table.data--stack tbody, table.data--stack tr, table.data--stack td { display: block; width: 100%; }
+  table.data--stack thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+  table.data--stack tr { padding: 12px 0; border-top: 1px solid var(--divider); }
+  table.data--stack tr:first-child { border-top: 0; }
+  table.data--stack td { border: 0; padding: 3px 0; font-size: 16px; overflow-wrap: anywhere; }
+  table.data--stack td::before { content: attr(data-label) ': '; font-size: 13px; font-weight: 600; color: var(--muted); }
+  table.data--stack td.cell-lot::before, table.data--stack td.cell-address::before { content: none; }
+  table.data--stack td.cell-lot { font-weight: 700; padding-bottom: 0; }
+  table.data--stack td.cell-address { font-weight: 600; }
+}

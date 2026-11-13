@@ -7,7 +7,7 @@ import NotLinked, { isLinked } from '../../components/NotLinked';
 import BoardLink from '../../components/BoardLink';
 import ContactFooter from '../../components/ContactFooter';
 import { config } from '../../config';
-import { daysAgo, dayNum, greeting, monthAbbr, weekdayTime } from '../../components/dates';
+import { daysAgo, dayNum, greeting, eventWhen, monthAbbr } from '../../components/dates';
 
 export default function Home() {
   const { data, error, loading } = useAsync(() => getApi().getOwnerHome());
@@ -33,7 +33,7 @@ export default function Home() {
               <div>
                 <p className="eyebrow">Next up</p>
                 <p className="row__title">{ev.title}</p>
-                <p className="row__meta">{weekdayTime(ev.starts_at)}{ev.location ? ` · ${ev.location}` : ev.video_url ? ' · Video link on the calendar' : ''}</p>
+                <p className="row__meta">{eventWhen(ev.starts_at, ev.kind)}{ev.location ? ` · ${ev.location}` : ev.video_url ? ' · Video link on the calendar' : ''}</p>
               </div>
             </Link>
           )}

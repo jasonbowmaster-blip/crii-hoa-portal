@@ -9,14 +9,13 @@ export default function PayReturn() {
     <main className="page">
       <h1 className="title">Thank you, {session?.owner?.first_name ?? 'neighbor'}</h1>
       <p className="sub" role="status">
-        Your payment is processing. Bank payments take 2 to 4 business days to clear; your bill shows Processing
-        until then, then Paid. Card payments show Paid right away.
+        We’re checking your payment. Your bill will update shortly.
       </p>
       <section className="card">
-        <p className="row__title">What happens next</p>
+        <p className="row__title">What to expect</p>
         <p className="sub">
-          If your bank returns the payment, your bill shows Unpaid again and we email you. No late fee applies
-          while a payment is processing.
+          Card payments usually show Paid within minutes. Bank payments can take 2 to 4 business days to clear, and your bill
+          shows Processing until then. Open My bill to see where yours stands.
         </p>
       </section>
       <Link to="/bill" className="btn btn--block">See my bill</Link>

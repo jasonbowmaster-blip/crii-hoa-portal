@@ -1,4 +1,4 @@
-import { appNow } from '../../lib/clock';
+import { todayISO } from '../../lib/clock';
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link } from 'react-router-dom';
@@ -19,7 +19,7 @@ export default function BoardChecks() {
   const [lotId, setLotId] = useState('');
   const [number, setNumber] = useState('');
   const [amount, setAmount] = useState('');
-  const [received, setReceived] = useState(appNow().toISOString().slice(0, 10));
+  const [received, setReceived] = useState(todayISO());
   const [error, setError] = useState('');
   const [ok, setOk] = useState('');
 

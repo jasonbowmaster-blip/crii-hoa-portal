@@ -26,6 +26,7 @@ export interface PortalApi {
   listDocuments(): Promise<DocumentItem[]>;        // filtered by audience server-side
   openDocument(id: string): Promise<string>;       // short-lived signed URL
   listEvents(): Promise<HoaEvent[]>;
+  listPublicEvents(): Promise<HoaEvent[]>;        // works signed out; only events marked public, public fields only
   sendMessage(input: { topic: MessageTopic; body: string }): Promise<Message>;
   listMyMessages(): Promise<Message[]>;
   updateNoticePrefs(input: { email_notice_consent: boolean; board_notice_request: boolean }): Promise<Owner>;

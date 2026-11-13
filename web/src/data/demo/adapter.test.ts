@@ -113,6 +113,16 @@ describe('board access', () => {
     expect(d.open_tasks).toHaveLength(4);
     expect(d.messages_this_week).toMatchObject({ received: 18, answered: 14, waiting: 4 });
   });
+  it('counts every unresolved message as waiting, not only this week\'s', async () => {
+    const d = await make('board', { now: '2027-03-01T15:00:00Z' }).getBoardDashboard();
+    expect(d.messages_this_week.received).toBe(0);
+    expect(d.messages_this_week.waiting).toBeGreaterThanOrEqual(4);
+  });
+  it('public events work signed out and expose only public events', async () => {
+    const ev = await make('signed_out').listPublicEvents();
+    expect(ev.length).toBeGreaterThan(0);
+    expect(ev.every((e) => e.is_public)).toBe(true);
+  });
   it('has the four mock-up tasks and four approved templates', async () => {
     const api = make('board');
     const tasks = await api.listTasks();

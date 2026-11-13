@@ -5,6 +5,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { LotRow, PortalApi } from '../api';
 import { businessDaysBetween, summarizeBalance } from '../../lib/ledger';
+import { appReturnUrl, hasAuthCallback, stripAuthParams } from '../../lib/authUrl';
 import type {
   Announcement, BillRunPreview, BoardDashboard, BoardMember, BoardTask, CheckRecord, ClaimRequest,
   DocumentItem, HoaEvent, Invoice, LedgerEntry, Lot, Message, Owner, OwnerHome, ReplyTemplate, Session,
@@ -27,8 +28,25 @@ function one<T>(data: unknown): T {
 interface BalanceRow { lot_id: string; balance_cents: number; processing_cents?: number; state?: LotRow['state'] }
 const isPaid = (b: BalanceRow) => b.state === 'paid' || b.state === 'credit';   // same rule as the demo: credit counts as paid
 
+// PKCE, not the implicit flow: the callback comes back as "?code=" on the app's own address (HashRouter owns the part
+// after "#", so a "#access_token=" callback would collide with the routes). supabase-js exchanges the code on creation.
 export function createSupabaseApi(url: string, anonKey: string): PortalApi {
-  const sb: SupabaseClient = createClient(url, anonKey);
+  return build(url, anonKey).api;
+}
+
+// Same, but resolves only once a "?code=" sign-in callback has been exchanged and removed from the address bar, so the
+// router never renders (and never redirects) while a half-finished sign-in is in the URL.
+export async function createReadySupabaseApi(url: string, anonKey: string): Promise<PortalApi> {
+  const { api, sb } = build(url, anonKey);
+  try { await sb.auth.initialize(); } catch { /* a failed exchange just means "not signed in"; the sign-in screen is shown */ }
+  if (typeof location !== 'undefined' && hasAuthCallback(location.href)) {
+    try { history.replaceState(history.state, '', stripAuthParams(location.href)); } catch { /* ignore */ }
+  }
+  return api;
+}
+
+function build(url: string, anonKey: string): { api: PortalApi; sb: SupabaseClient } {
+  const sb: SupabaseClient = createClient(url, anonKey, { auth: { flowType: 'pkce', detectSessionInUrl: true } });
 
   async function getSession(): Promise<Session | null> {
     const { data } = await sb.auth.getSession();
@@ -85,6 +103,12 @@ export function createSupabaseApi(url: string, anonKey: string): PortalApi {
     return must(await sb.from('events').select('*').order('starts_at', { ascending: true }), 'events') as HoaEvent[];
   }
 
+  // Signed-out view: only rows the board marked public, and only the columns a public page needs.
+  async function listPublicEvents(): Promise<HoaEvent[]> {
+    return must(await sb.from('events').select('id, title, kind, starts_at, location, video_url, notes, is_public')
+      .eq('is_public', true).order('starts_at', { ascending: true }), 'events') as HoaEvent[];
+  }
+
   async function listTasks(): Promise<BoardTask[]> {
     return must(await sb.from('board_tasks').select('*').order('created_at', { ascending: false }), 'tasks') as BoardTask[];
   }
@@ -93,13 +117,13 @@ export function createSupabaseApi(url: string, anonKey: string): PortalApi {
     getSession,
 
     async signInWithGoogle() {
-      const { error } = await sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: location.origin } });
+      const { error } = await sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: appReturnUrl() } });
       if (error) throw new Error(error.message);
     },
 
     async sendSignInLink(email) {
       // The response is the same whether or not the address is on the roster.
-      const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true, emailRedirectTo: location.origin } });
+      const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true, emailRedirectTo: appReturnUrl() } });
       if (error) throw new Error(error.message);
       return { sent: true };
     },
@@ -154,6 +178,8 @@ export function createSupabaseApi(url: string, anonKey: string): PortalApi {
 
     listEvents,
 
+    listPublicEvents,
+
     async sendMessage({ topic, body }) {
       const { data, error } = await sb.rpc('send_message', { p_topic: topic, p_body: body });
       if (error) throw new Error(error.message);
@@ -177,16 +203,18 @@ export function createSupabaseApi(url: string, anonKey: string): PortalApi {
 
     async getBoardDashboard(): Promise<BoardDashboard> {
       const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString();
-      const [lots, balances, owners, tasks, messages] = await Promise.all([
+      const [lots, balances, owners, tasks, messages, unresolved] = await Promise.all([
         sb.from('lots').select('id', { count: 'exact', head: true }),
         sb.from('lot_balances').select('*'),
         sb.from('owners').select('id', { count: 'exact', head: true }).not('user_id', 'is', null),
         listTasks(),
         sb.from('messages').select('*').gte('created_at', weekAgo),
+        // "Waiting" counts every unresolved message, however old, not just this week's.
+        sb.from('messages').select('*').in('status', OPEN_STATUSES),
       ]);
       const bal = must(balances, 'balances') as BalanceRow[];
       const msgs = must(messages, 'messages') as Message[];
-      const waiting = msgs.filter((m) => OPEN_STATUSES.includes(m.status));
+      const waiting = must(unresolved, 'open messages') as Message[];
       const nowIso = new Date().toISOString();
       return {
         lots_total: lots.count ?? 0,
@@ -301,5 +329,5 @@ export function createSupabaseApi(url: string, anonKey: string): PortalApi {
       return must(await sb.from('claim_requests').select('*').order('created_at', { ascending: false }), 'claims') as ClaimRequest[];
     },
   };
-  return api;
+  return { api, sb };
 }
