@@ -276,7 +276,7 @@ export function createDemoApi(opts: DemoOptions = {}): PortalApi {
       if (state.used_codes.includes(clean)) return { ok: false, message: 'That code has already been used. Message the board if you need a new one.' };
       state.used_codes.push(clean);
       const lot = state.lots.find((l) => l.lot_number === PAT_LOT_NUMBER)!;   // the sample letter is for Lot 42
-      const claim: ClaimRequest = { id: newId('claim'), lot_id: lot.id, email: session()!.email, created_at: nowISO(), status: 'pending' };
+      const claim: ClaimRequest = { id: newId('claim'), lot_id: lot.id, email: session()!.email, created_at: nowISO(), status: 'pending', user_id: PAT_USER, code: clean };
       state.claims.push(claim);
       addTask({ kind: 'claim_attach', lot_id: lot.id, title: `Confirm email for Lot ${lot.lot_number}`, summary: `${claim.email} used a claim code for Lot ${lot.lot_number}. Verify ownership against the county land records, then approve or reject.`, due_at: null, ref_id: claim.id });
       save();
@@ -354,6 +354,14 @@ export function createDemoApi(opts: DemoOptions = {}): PortalApi {
       const lot = input.lotId ? myLots().find((l) => l.id === input.lotId) : first;
       if (!lot) throw new Error('You are not a current owner of that lot.');
       const ownerHere = myOwners().find((o) => state.lot_owners.some((lo) => lo.owner_id === o.id && lo.lot_id === lot.id && isCurrent(lo))) ?? me();
+      // At most 10 messages per sign-in per hour and 30 per day (mirrors send_message in 0006_grok.sql).
+      const mine = new Set(myOwners().map((o) => o.id));
+      const nowMs = Date.parse(nowISO());
+      const recent = (ms: number) => state.messages.filter((x) => x.channel === 'portal' && x.owner_id && mine.has(x.owner_id)
+        && Date.parse(x.created_at) > nowMs - ms).length;
+      if (recent(3_600_000) >= 10 || recent(86_400_000) >= 30) {
+        throw new Error('You\'ve sent a lot of messages today. Please call or email the board.');
+      }
       const m: Message = {
         id: newId('msg'), lot_id: lot.id, owner_id: ownerHere.id, topic: input.topic,
         subject: body.length > 60 ? `${body.slice(0, 57)}...` : body, body, status: 'acknowledged',
@@ -418,6 +426,11 @@ export function createDemoApi(opts: DemoOptions = {}): PortalApi {
       if (action === 'dismiss' && (task.kind === 'check_confirm' || task.kind === 'claim_attach')) {
         throw new Error('This task cannot be dismissed. Approve or reject it.');
       }
+      // Same rule as resolve_claim_request: nobody decides a claim made with their own sign-in (approve or reject).
+      const ownClaim = task.kind === 'claim_attach' ? state.claims.find((c) => c.id === task.ref_id) : undefined;
+      if (ownClaim?.user_id && ownClaim.user_id === boardMember()?.user_id) {
+        throw new Error('You cannot decide a claim made with your own sign-in. Another board member must.');
+      }
       if (action === 'dismiss') {
         task.status = 'dismissed';
       } else if (task.kind === 'check_confirm') {
@@ -427,7 +440,11 @@ export function createDemoApi(opts: DemoOptions = {}): PortalApi {
       } else if (action === 'reject') {
         task.status = task.kind === 'claim_attach' ? 'done' : 'dismissed';
         const claim = task.kind === 'claim_attach' ? state.claims.find((c) => c.id === task.ref_id) : null;
-        if (claim) claim.status = 'rejected';
+        if (claim) {
+          claim.status = 'rejected';
+          // rejecting gives the claim code back so the owner can try again; approving keeps it used
+          if (claim.code) state.used_codes = state.used_codes.filter((c) => c !== claim.code);
+        }
       } else {
         const m = state.messages.find((x) => x.id === task.ref_id);
         if (task.kind === 'template_reply' && m) useTemplate(m.id, task.template_id ?? 'tpl-meeting');
@@ -517,7 +534,9 @@ export function createDemoApi(opts: DemoOptions = {}): PortalApi {
       let email = 0; let paper = 0; let billed = 0; let processingTotal = 0; let creditOnly = 0;
       for (const lot of state.lots) {
         const owners = ownersOf(lot.id);
-        const owner = owners.find((o) => o.email_notice_consent && o.email && o.email.trim() !== '');
+        // Email only when EVERY current owner has consented and has an address (mirrors deliveryFor in bill-run.ts):
+        // one owner's consent must not take paper away from a co-owner who has not elected e-mail notice.
+        const owner = owners.length > 0 && owners.every((o) => o.email_notice_consent && o.email && o.email.trim() !== '');
         // Carried = what the lot already owes, not counting this year's own run: its charge (even one with no invoice
         // behind it, a credit-only lot) and every payment, credit or refund linked to this year's invoices.
         const carriedEntries = lotEntries(lot.id).filter((e) => !((e.invoice_id && yearInvoiceIds.has(e.invoice_id)) || (e.external_ref ?? '').startsWith(`inv:${input.year}-`)));
@@ -566,7 +585,7 @@ export function createDemoApi(opts: DemoOptions = {}): PortalApi {
 
     async listClaimRequests() {
       await wait(); requireBoard();
-      return clone(state.claims);
+      return clone(state.claims.map(({ code: _code, ...c }) => c));
     },
   };
 }

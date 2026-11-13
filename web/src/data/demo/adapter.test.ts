@@ -480,3 +480,70 @@ describe('review fixes (mirror 0005_review.sql)', () => {
     expect(after2.owners.find((o) => o.id === 'owner-043')!.user_id).toBeNull();
   });
 });
+
+describe('review round 6 (mirror 0006_grok.sql)', () => {
+  const KEY = 'hoa-portal-demo-v1';
+  const store = (seed: ReturnType<typeof createSeed>) => window.localStorage.setItem(KEY, JSON.stringify(seed));
+  const read = () => JSON.parse(window.localStorage.getItem(KEY)!) as ReturnType<typeof createSeed>;
+  const claimTask = (id: string, lot: string) => ({ id: `task-${id}`, kind: 'claim_attach' as const, lot_id: lot, title: 'Claim', summary: 'x', status: 'open' as const, created_at: DEMO_NOW, due_at: null, ref_id: id, resolved_by: null, resolved_at: null });
+
+  it('a board member cannot approve or reject a claim made with their own sign-in', async () => {
+    await make('owner').redeemClaimCode(DEMO_CLAIM_CODE);
+    const board = make('board');
+    const task = (await board.listTasks()).find((t) => t.kind === 'claim_attach')!;
+    await expect(board.resolveTask(task.id, 'approve')).rejects.toThrow(/your own sign-in/);
+    await expect(board.resolveTask(task.id, 'reject')).rejects.toThrow(/your own sign-in/);
+    expect((await board.listClaimRequests())[0].status).toBe('pending');
+    expect((await board.listTasks()).find((t) => t.id === task.id)!.status).toBe('open');
+  });
+
+  it('rejecting gives the claim code back; approving keeps it used', async () => {
+    const seed = createSeed('board');
+    seed.used_codes.push(DEMO_CLAIM_CODE);
+    seed.claims.push({ id: 'claim-r', lot_id: 'lot-042', email: 'x@example.com', created_at: DEMO_NOW, status: 'pending', user_id: 'user-someone-else', code: DEMO_CLAIM_CODE });
+    seed.tasks.push(claimTask('claim-r', 'lot-042'));
+    store(seed);
+    await make('board').resolveTask('task-claim-r', 'reject');
+    expect(read().used_codes).not.toContain(DEMO_CLAIM_CODE);
+    expect((await make('owner').redeemClaimCode(DEMO_CLAIM_CODE)).ok).toBe(true);
+
+    const seed2 = createSeed('board');
+    seed2.owners.find((o) => o.id === 'owner-043')!.user_id = null;
+    seed2.used_codes.push(DEMO_CLAIM_CODE);
+    seed2.claims.push({ id: 'claim-a', lot_id: 'lot-043', email: 'x@example.com', created_at: DEMO_NOW, status: 'pending', user_id: 'user-someone-else', code: DEMO_CLAIM_CODE });
+    seed2.tasks.push(claimTask('claim-a', 'lot-043'));
+    store(seed2);
+    await make('board').resolveTask('task-claim-a', 'approve');
+    expect(read().used_codes).toContain(DEMO_CLAIM_CODE);
+  });
+
+  it('send_message: 10 an hour and 30 a day per sign-in, with a friendly refusal', async () => {
+    const api = make('owner');
+    for (let i = 0; i < 10; i++) await api.sendMessage({ topic: 'question', body: `hello ${i}` });
+    await expect(api.sendMessage({ topic: 'question', body: 'eleventh' })).rejects.toThrow("You've sent a lot of messages today. Please call or email the board.");
+    // two hours later the hour is quiet, so only the daily count matters: 10 sent + 20 more = 30
+    const twoHours = new Date(Date.parse(DEMO_NOW) + 2 * 3_600_000).toISOString();
+    const s = read();
+    const tmpl = s.messages.find((m) => m.owner_id === 'owner-042')!;
+    for (let i = 0; i < 20; i++) s.messages.push({ ...tmpl, id: `pad-${i}`, channel: 'portal', created_at: new Date(Date.parse(DEMO_NOW) + 3_600_000).toISOString() });
+    store(s);
+    await expect(make('owner', { now: twoHours }).sendMessage({ topic: 'question', body: 'over the day' })).rejects.toThrow(/sent a lot of messages/);
+  });
+
+  it('bill run: one owner\'s consent does not take paper from a co-owner who has not elected email', async () => {
+    const seed = createSeed('board');
+    seed.owners.find((o) => o.id === 'owner-002')!.email_notice_consent = true;   // lot 2 owner consents
+    seed.owners.find((o) => o.id === 'owner-004')!.email_notice_consent = true;
+    seed.owners.push({ ...seed.owners.find((o) => o.id === 'owner-004')!, id: 'owner-004b', full_name: 'Co Owner', email: 'co@example.com', email_notice_consent: false, user_id: null });
+    seed.lot_owners.push({ lot_id: 'lot-004', owner_id: 'owner-004b', starts_on: '2019-06-01', ends_on: null });
+    store(seed);
+    const p = await make('board').previewBillRun({ year: 2027, amount_cents: 17500, due_on: '2027-05-15' });
+    expect(p.lots.find((l) => l.lot_number === 4)!.delivery).toBe('paper');
+    expect(p.lots.find((l) => l.lot_number === 2)!.delivery).toBe('email');
+    const seed2 = read();
+    seed2.owners.find((o) => o.id === 'owner-004b')!.email_notice_consent = true;
+    store(seed2);
+    expect((await make('board').previewBillRun({ year: 2027, amount_cents: 17500, due_on: '2027-05-15' })).lots.find((l) => l.lot_number === 4)!.delivery).toBe('email');
+  });
+});
+

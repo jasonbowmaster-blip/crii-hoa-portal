@@ -11,7 +11,10 @@ const SKIP_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.wo
 const VALUE_RULES = [
   { rule: 'stripe live key', re: /sk_live_[A-Za-z0-9]*/ },
   { rule: 'stripe test key', re: /sk_test_[A-Za-z0-9]*/ },
+  { rule: 'stripe restricted live key', re: /rk_live_[A-Za-z0-9]*/ },
+  { rule: 'stripe restricted test key', re: /rk_test_[A-Za-z0-9]*/ },
   { rule: 'stripe webhook secret', re: /whsec_[A-Za-z0-9]*/ },
+  { rule: 'supabase secret key', re: /sb_secret_[A-Za-z0-9_-]*/ },
 ];
 // Names of server secrets: a finding when used in code (comments are allowed to mention them).
 const NAME_RE = /\b(SUPABASE_SERVICE_ROLE_KEY|STRIPE_SECRET_KEY|LOB_API_KEY)\b/;

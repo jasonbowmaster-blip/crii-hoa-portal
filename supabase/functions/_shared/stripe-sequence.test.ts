@@ -168,6 +168,54 @@ describe('payment lifecycles', () => {
     });
   });
 
+  describe('invoice.voided', () => {
+    it('an unpaid voided bill no longer shows as owed; one credit keyed by the void event; replay adds nothing', () => {
+      const db = start();
+      const v = ev('invoice.voided', { id: 'in_1' }, 'evt_void');
+      expect(balance(db).balance_cents).toBe(17500);
+      applySim(db, mapStripeEvent(v));
+      expect(db.invoices[0].status).toBe('void');
+      expect(balance(db)).toMatchObject({ balance_cents: 0 });
+      const credits = db.ledger.filter((r) => r.kind === 'credit');
+      expect(credits).toHaveLength(1);
+      expect(credits[0]).toMatchObject({ external_ref: 'void:evt_void', amount_cents: -17500, invoice_id: 'inv-1' });
+      expect(applySim(db, mapStripeEvent(v))).toMatchObject({ applied: false, duplicate: true });
+      feed(db, ev('invoice.voided', { id: 'in_1' }, 'evt_void_again'));
+      expect(db.ledger.filter((r) => r.kind === 'credit')).toHaveLength(1);
+      expect(balance(db).balance_cents).toBe(0);
+    });
+    it('a paid invoice is not reversed, only recorded', () => {
+      const db = start();
+      feed(db, ev('invoice.paid', { id: 'in_1', amount_paid: 17500, payment_intent: 'pi_1' }));
+      expect(balance(db).balance_cents).toBe(0);
+      feed(db, ev('invoice.voided', { id: 'in_1' }, 'evt_void_paid'));
+      expect(db.ledger.filter((r) => r.kind === 'credit')).toEqual([]);
+      expect(db.processed.has('evt_void_paid')).toBe(true);
+    });
+    it('the paid STATUS alone stops the reversal (even with an unpaid-looking charge behind it)', () => {
+      const db = start();
+      db.invoices[0].status = 'paid';
+      feed(db, ev('invoice.voided', { id: 'in_1' }, 'evt_void_paid2'));
+      expect(db.ledger.filter((r) => r.kind === 'credit')).toEqual([]);
+      expect(balance(db).balance_cents).toBe(17500);
+    });
+    it('a bill already covered by a cleared payment gets no credit (never a positive credit)', () => {
+      const db = start();
+      db.ledger.push({ lot_id: LOT, posted_on: '2027-02-01', kind: 'payment', description: 'Check', detail: null, amount_cents: -17500,
+        status: 'cleared', method: 'check', invoice_id: 'inv-1', external_ref: 'check:2' });
+      feed(db, ev('invoice.voided', { id: 'in_1' }, 'evt_void_cov'));
+      expect(db.ledger.filter((r) => r.kind === 'credit')).toEqual([]);
+    });
+    it('a partly paid bill gets a credit only for what is still unpaid', () => {
+      const db = start();
+      db.ledger.push({ lot_id: LOT, posted_on: '2027-02-01', kind: 'payment', description: 'Check', detail: null, amount_cents: -5000,
+        status: 'cleared', method: 'check', invoice_id: 'inv-1', external_ref: 'check:1' });
+      feed(db, ev('invoice.voided', { id: 'in_1' }, 'evt_void_part'));
+      expect(db.ledger.find((r) => r.kind === 'credit')).toMatchObject({ amount_cents: -12500 });
+      expect(balance(db).balance_cents).toBe(0);
+    });
+  });
+
   it('an event for a payment we cannot place yet is not recorded, so the retry can apply it', () => {
     const db = start();
     const first = applySim(db, mapStripeEvent(ev('charge.dispute.created', { amount: 1, payment_intent: 'pi_unknown' }, 'evt_x')));

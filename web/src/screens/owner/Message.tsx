@@ -39,7 +39,11 @@ export default function Message() {
     try {
       await getApi().sendMessage({ topic, body: body.trim() });
       setSentTopic(topic); setBody(''); recent.reload();
-    } catch { setError('We could not send your message. Please try again, or email the board.'); }
+    } catch (err) {
+      // the rate-limit text is written for owners; show it as is, anything else stays generic
+      const limited = err instanceof Error && err.message.includes('sent a lot of messages');
+      setError(limited ? (err as Error).message : 'We could not send your message. Please try again, or email the board.');
+    }
     finally { setBusy(false); }
   }
 

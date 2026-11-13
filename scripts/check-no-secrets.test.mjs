@@ -28,11 +28,20 @@ describe('check-no-secrets', () => {
   const planted = {
     'live key': `const k = "sk_live_${'a'.repeat(24)}";`,
     'test key': `const k = "sk_test_${'a'.repeat(24)}";`,
+    'restricted live key': `const k = "rk_live_${'a'.repeat(24)}";`,
+    'restricted test key': `const k = "rk_test_${'a'.repeat(24)}";`,
+    'supabase secret key': `const k = "sb_secret_${'a'.repeat(24)}";`,
     'webhook secret': `const k = "whsec_${'a'.repeat(24)}";`,
     'service_role JWT': `const k = "${jwt('service_role')}";`,
     'service key name in code': 'const k = process.env.SUPABASE_SERVICE_ROLE_KEY;',
     'stripe key name in code': 'x(STRIPE_SECRET_KEY)',
     'lob key name in code': 'const a = import.meta.env.LOB_API_KEY;',
+  };
+  const rule = {
+    'live key': 'stripe live key', 'test key': 'stripe test key', 'restricted live key': 'stripe restricted live key',
+    'restricted test key': 'stripe restricted test key', 'supabase secret key': 'supabase secret key',
+    'webhook secret': 'stripe webhook secret', 'service_role JWT': 'service_role JWT',
+    'service key name in code': 'SUPABASE_SERVICE_ROLE_KEY', 'stripe key name in code': 'STRIPE_SECRET_KEY', 'lob key name in code': 'LOB_API_KEY',
   };
   for (const [label, content] of Object.entries(planted)) {
     it(`fails on a planted ${label}`, () => {
@@ -40,6 +49,7 @@ describe('check-no-secrets', () => {
       const r = run();
       expect(r.status).toBe(1);
       expect(r.stderr).toContain('index.js');
+      expect(r.stderr).toContain(rule[label] ?? label);   // fails on the RIGHT rule, not just any rule
     });
   }
 

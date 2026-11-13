@@ -108,6 +108,7 @@ export interface StripeChanges {
   ledger: LedgerUpsert[];
   invoice_status: InvoiceStatus | null;
   invoice_force: boolean;           // true: a return or dispute may move the invoice back to open
+  reverse_invoice_charge: boolean;  // true (invoice.voided): the database credits back the invoice's unpaid charge, once, keyed void:<event id>
   tasks: TaskInsert[];
 }
 
@@ -115,7 +116,7 @@ function empty(event: StripeEvent, handled: boolean, ignored_reason?: string): S
   return {
     event_id: event.id, event_type: event.type, handled, ignored_reason,
     stripe_invoice_id: null, payment_intent: null, lot_hint: null,
-    ledger: [], invoice_status: null, invoice_force: false, tasks: [],
+    ledger: [], invoice_status: null, invoice_force: false, reverse_invoice_charge: false, tasks: [],
   };
 }
 
@@ -124,11 +125,29 @@ function postedOn(event: StripeEvent): string {
   return new Date(ms || 0).toISOString().slice(0, 10);
 }
 
-function methodOf(obj: Record<string, any>): PayMethod {
-  const types: string[] = obj.payment_method_types ?? [];
+// Stripe payment method type -> our method.
+function methodFromType(t: unknown): PayMethod | null {
+  if (t === 'us_bank_account' || t === 'ach_debit') return 'ach';
+  if (t === 'card') return 'card';
+  return typeof t === 'string' && t ? 'other' : null;
+}
+
+// The method actually USED, never "ACH if it was allowed". In order of trust:
+//  1. what Stripe says was used: the charge's payment_method_details.type (on the object itself, on its charge, or on the
+//     PaymentIntent's latest charge), or the type of the payment method in last_payment_error;
+//  2. metadata.pay_method, which our own pay link sets (ach or card);
+//  3. payment_method_types, but only when it lists exactly one method (then that is the only one that could be used).
+// Anything else is unknown (null): a payment with several allowed methods and no evidence is not guessed.
+export function methodOf(obj: Record<string, any>): PayMethod | null {
+  const charge = [obj.charge, obj.latest_charge, obj.charges?.data?.[0]].find((c) => c && typeof c === 'object');
+  const used = methodFromType(obj.payment_method_details?.type)
+    ?? methodFromType(charge?.payment_method_details?.type)
+    ?? methodFromType(obj.last_payment_error?.payment_method?.type);
+  if (used) return used;
   const m = obj.metadata?.pay_method;
   if (m === 'ach' || m === 'card') return m;
-  return types.includes('us_bank_account') ? 'ach' : 'card';
+  const types: unknown[] = Array.isArray(obj.payment_method_types) ? obj.payment_method_types : [];
+  return types.length === 1 ? methodFromType(types[0]) : null;
 }
 
 const idOf = (v: unknown): string | null =>
@@ -187,6 +206,8 @@ export function mapStripeEvent(event: StripeEvent): StripeChanges {
     case 'invoice.voided': {
       const refused = needRef(); if (refused) return refused;
       out.invoice_status = 'void';
+      // A bill voided before it was paid is no longer owed: the database posts one credit for its unpaid charge.
+      out.reverse_invoice_charge = true;
       return out;
     }
     case 'payment_intent.processing': {
@@ -202,7 +223,9 @@ export function mapStripeEvent(event: StripeEvent): StripeChanges {
     }
     case 'payment_intent.payment_failed': {
       // A failed bank payment is an ACH return. A plain card decline is not a ledger event.
-      if (methodOf(obj) !== 'ach') return empty(event, false, 'not_an_ach_return');
+      const method = methodOf(obj);
+      if (method === null) return empty(event, false, 'payment_method_unknown');   // not guessed: kept for the board
+      if (method !== 'ach') return empty(event, false, 'not_an_ach_return');
       const refused = needRef(); if (refused) return refused;
       const amount = Math.abs(obj.amount ?? 0);
       out.ledger.push({

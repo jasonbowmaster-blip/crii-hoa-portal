@@ -58,6 +58,37 @@ describe('verifyStripeSignature', () => {
 const ev = (type: string, object: Record<string, any>): StripeEvent => ({ id: `evt_${type}`, type, created: 1_800_000_000, data: { object } });
 const meta = { lot_id: 'lot-42' };
 
+describe('methodOf: the method actually used', () => {
+  const method = (obj: Record<string, any>) => mapStripeEvent(ev('payment_intent.succeeded', { id: 'pi_m', amount: 100, invoice: 'in_1', ...obj })).ledger[0].method;
+  it('a card paid on an intent that also allowed ACH is a card, not ACH', () => {
+    expect(method({ payment_method_types: ['card', 'us_bank_account'], latest_charge: { payment_method_details: { type: 'card' } } })).toBe('card');
+    expect(method({ payment_method_types: ['us_bank_account', 'card'], charges: { data: [{ payment_method_details: { type: 'card' } }] } })).toBe('card');
+  });
+  it('a bank payment is ACH whatever else was allowed', () => {
+    expect(method({ payment_method_types: ['card', 'us_bank_account'], payment_method_details: { type: 'us_bank_account' } })).toBe('ach');
+  });
+  it('metadata.pay_method is used when Stripe says nothing', () => {
+    expect(method({ payment_method_types: ['card', 'us_bank_account'], metadata: { pay_method: 'card' } })).toBe('card');
+    expect(method({ payment_method_types: ['card', 'us_bank_account'], metadata: { pay_method: 'ach' } })).toBe('ach');
+  });
+  it('payment_method_types counts only when it has a single entry', () => {
+    expect(method({ payment_method_types: ['us_bank_account'] })).toBe('ach');
+    expect(method({ payment_method_types: ['card'] })).toBe('card');
+    expect(method({ payment_method_types: ['card', 'us_bank_account'] })).toBeNull();
+    expect(method({})).toBeNull();
+  });
+  it('the type Stripe reports wins over metadata', () => {
+    expect(method({ metadata: { pay_method: 'ach' }, payment_method_details: { type: 'card' } })).toBe('card');
+  });
+  it('a failure with several allowed methods and no evidence is kept for the board, not guessed as a card or an ACH return', () => {
+    const c = mapStripeEvent(ev('payment_intent.payment_failed', { id: 'pi_x', amount: 100, invoice: 'in_1', payment_method_types: ['card', 'us_bank_account'] }));
+    expect(c.handled).toBe(false);
+    expect(disposition(c)).toBe('quarantine');
+    const ach = mapStripeEvent(ev('payment_intent.payment_failed', { id: 'pi_x', amount: 100, invoice: 'in_1', payment_method_types: ['card', 'us_bank_account'], last_payment_error: { payment_method: { type: 'us_bank_account' } } }));
+    expect(ach.ledger[0]).toMatchObject({ status: 'returned', method: 'ach' });
+  });
+});
+
 describe('mapStripeEvent', () => {
   it('invoice.paid posts a cleared payment keyed by the PaymentIntent and marks the invoice paid', () => {
     const c = mapStripeEvent(ev('invoice.paid', { id: 'in_1', number: '2027-042', amount_paid: 15000, payment_intent: 'pi_1', metadata: meta }));
@@ -78,8 +109,12 @@ describe('mapStripeEvent', () => {
     expect(c.ledger).toEqual([]);
     expect(c).toMatchObject({ invoice_status: 'open', invoice_force: false });
   });
-  it('invoice.voided voids the invoice', () => {
-    expect(mapStripeEvent(ev('invoice.voided', { id: 'in_1' })).invoice_status).toBe('void');
+  it('invoice.voided voids the invoice and asks the database to reverse the unpaid charge', () => {
+    const c = mapStripeEvent(ev('invoice.voided', { id: 'in_1' }));
+    expect(c.invoice_status).toBe('void');
+    expect(c.reverse_invoice_charge).toBe(true);
+    expect(c.ledger).toEqual([]);
+    expect(mapStripeEvent(ev('invoice.paid', { id: 'in_1', amount_paid: 1 })).reverse_invoice_charge).toBe(false);
   });
   it('payment_intent.processing posts a processing ACH payment keyed by payment id', () => {
     const c = mapStripeEvent(ev('payment_intent.processing', { id: 'pi_1', amount: 15000, invoice: 'in_1', payment_method_types: ['us_bank_account'] }));

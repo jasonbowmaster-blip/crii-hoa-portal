@@ -202,6 +202,8 @@ export interface ClaimRequest {
   email: string;
   created_at: ISOTime;
   status: 'pending' | 'approved' | 'rejected';
+  user_id?: string | null;   // the sign-in that redeemed the code (demo only; a board member may not decide their own)
+  code?: string | null;      // the claim code it used (demo only; given back when the claim is rejected)
 }
 
 // ---- Composite views the screens read ----

@@ -19,6 +19,7 @@ export interface InvoiceDraft {
   lines: { description: string; amount_cents: number }[];
   delivery: 'email' | 'paper';
   email_to: string | null;     // set only when delivery is 'email'
+  also_email_to: string[];     // consenting owners to e-mail a courtesy copy when delivery is 'paper' because a co-owner has not consented
 }
 
 export interface BillRun {
@@ -61,8 +62,21 @@ export function billRunKey(year: number, lotNumber: number): string {
   return `billrun-${year}-lot-${lotNumber}`;
 }
 
-// Email only when an owner of the lot has elected electronic notice AND has an address.
-// Everyone else gets paper.
+// Delivery for one lot (Va. Code 55.1-1815: electronic notice only to an owner who elected it).
+// 'email' only when EVERY current owner of the lot has consented and has an address; one owner's consent must not
+// take paper away from a co-owner who has not elected e-mail (or who has no address on file).
+// The draft has a single delivery value, so a mixed lot is 'paper'; the consenting owners with an address are listed
+// in also_email_to so they can still get a courtesy e-mail copy.
+export function deliveryFor(lotOwners: { email: string | null; email_notice_consent: boolean }[]):
+  { delivery: 'email' | 'paper'; email_to: string | null; also_email_to: string[] } {
+  const hasAddr = (o: { email: string | null }) => !!o.email && o.email.trim() !== '';
+  const consenting = lotOwners.filter((o) => o.email_notice_consent && hasAddr(o));
+  if (lotOwners.length > 0 && consenting.length === lotOwners.length) {
+    return { delivery: 'email', email_to: consenting[0].email, also_email_to: [] };
+  }
+  return { delivery: 'paper', email_to: null, also_email_to: consenting.map((o) => o.email as string) };
+}
+
 // `posted` is what this year's run already put in the ledger (the charge rows), so a re-run
 // does not count its own charge as a carried balance.
 // `processingOnThisYear` is the amount of processing payments made against this year's own invoices
@@ -79,7 +93,7 @@ export function buildBillRun(
   const sorted = [...lots].sort((a, b) => a.lot_number - b.lot_number);
   const drafts: InvoiceDraft[] = sorted.map((lot) => {
     const lotOwners = owners.filter((o) => o.lot_id === lot.id).map((o) => o.owner);
-    const emailOwner = lotOwners.find((o) => o.email_notice_consent && o.email && o.email.trim() !== '');
+    const del = deliveryFor(lotOwners);
     const carried = balanceByLot.get(lot.id) ?? 0;
     const processing = processingByLot.get(lot.id) ?? 0;
     const lines = [{ description: `${params.year} annual assessment`, amount_cents: params.amount_cents }];
@@ -102,8 +116,9 @@ export function buildBillRun(
       credit_left_cents: Math.max(0, -(params.amount_cents + carried)),
       no_invoice: params.amount_cents + carried < 0,
       lines,
-      delivery: emailOwner ? 'email' : 'paper',
-      email_to: emailOwner ? emailOwner.email : null,
+      delivery: del.delivery,
+      email_to: del.email_to,
+      also_email_to: del.also_email_to,
     };
   });
   const email = drafts.filter((d) => d.delivery === 'email').length;

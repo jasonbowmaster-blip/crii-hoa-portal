@@ -38,6 +38,24 @@ describe('buildBillRun', () => {
     expect(by(7)).toMatchObject({ delivery: 'paper', email_to: null }); // email on file, no consent
     expect(by(100).delivery).toBe('paper'); // consent but no address
   });
+  it('a co-owner without consent keeps the lot on paper (two-owner lot)', () => {
+    const two: LotOwnerRow[] = [
+      { lot_id: 'a', owner: owner('1', true, 'one@example.test') },
+      { lot_id: 'a', owner: owner('9', false, 'nine@example.test') },
+    ];
+    const d = buildBillRun(lots, two, [], params).drafts.find((x) => x.lot_number === 42)!;
+    expect(d).toMatchObject({ delivery: 'paper', email_to: null, also_email_to: ['one@example.test'] });
+    const both: LotOwnerRow[] = [
+      { lot_id: 'a', owner: owner('1', true, 'one@example.test') },
+      { lot_id: 'a', owner: owner('9', true, 'nine@example.test') },
+    ];
+    expect(buildBillRun(lots, both, [], params).drafts.find((x) => x.lot_number === 42)).toMatchObject({ delivery: 'email', also_email_to: [] });
+    const noAddr: LotOwnerRow[] = [
+      { lot_id: 'a', owner: owner('1', true, 'one@example.test') },
+      { lot_id: 'a', owner: owner('9', false, null) },
+    ];
+    expect(buildBillRun(lots, noAddr, [], params).drafts.find((x) => x.lot_number === 42)!.delivery).toBe('paper');
+  });
   it('totals and preview shape', () => {
     expect(run.totals).toEqual({ lots: 3, email: 1, paper: 2, billed_cents: 18000 + 20500 + 17000, processing_cents: 0, credit_only: 0 });
     expect(toPreview(run, params).lots[0]).toMatchObject({ lot_number: 7, carried_cents: 2500, delivery: 'paper' });
