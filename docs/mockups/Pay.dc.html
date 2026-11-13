@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pay dues</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Space+Grotesk:wght@500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#2F5D50}a:hover{color:#1F4238}
+</style>
+</helmet>
+<div style="position: relative; width: 390px; height: 844px; overflow: hidden; background: #F6F7F4; font-family: Inter, system-ui, sans-serif; color: #1B1F1D; box-sizing: border-box; padding: 56px 20px 32px; display: flex; flex-direction: column; gap: 18px">
+<a href="Main.dc.html" style="display: inline-flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 600; text-decoration: none; min-height: 44px">
+<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>Home</a>
+<h1 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 28px; font-weight: 600">Pay your balance</h1>
+
+<section aria-label="Statement" style="background: #FFFFFF; border: 1px solid #E3E6E1; border-radius: 16px; padding: 18px; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; justify-content: space-between; font-size: 15px"><span style="color: #555C58">Lot 42 · Pat Rivera</span><span style="color: #555C58">Invoice [NUMBER]</span></div>
+<div style="display: flex; justify-content: space-between; font-size: 16px"><span>Carried from before Jan 1</span><span style="font-weight: 600">$[CARRIED]</span></div>
+<div style="display: flex; justify-content: space-between; font-size: 16px"><span>2027 annual assessment</span><span style="font-weight: 600">$[AMOUNT]</span></div>
+<div style="display: flex; justify-content: space-between; font-size: 16px"><span>Payments and credits</span><span style="font-weight: 600">−$[CREDITS]</span></div>
+<div style="height: 1px; background: #E3E6E1"></div>
+<div style="display: flex; justify-content: space-between; font-size: 18px; font-weight: 600"><span>Total due by [DUE DATE]</span><span>$[BALANCE]</span></div>
+</section>
+
+<fieldset style="border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px">
+<legend style="font-size: 15px; font-weight: 600; margin-bottom: 10px">How would you like to pay?</legend>
+<button type="button" onClick="{{ pickBank }}" style="{{ bankStyle }}">
+<span style="display: flex; flex-direction: column; gap: 2px; text-align: left"><span style="font-size: 16px; font-weight: 600">Bank account</span><span style="font-size: 13px; color: #555C58">Lowest fee for the HOA · 2 to 4 days</span></span>
+<span style="font-size: 13px; font-weight: 600; color: #2F5D50">Recommended</span>
+</button>
+<button type="button" onClick="{{ pickCard }}" style="{{ cardStyle }}">
+<span style="display: flex; flex-direction: column; gap: 2px; text-align: left"><span style="font-size: 16px; font-weight: 600">Credit or debit card</span><span style="font-size: 13px; color: #555C58">Instant · card fee policy set by the board</span></span>
+</button>
+</fieldset>
+
+<a href="Paid.dc.html" style="display: flex; justify-content: center; align-items: center; height: 54px; border-radius: 12px; background: #2F5D50; color: #FFFFFF; font-size: 16px; font-weight: 600; text-decoration: none">Continue to secure payment</a>
+<p style="margin: 0; font-size: 13px; line-height: 1.5; color: #555C58">You finish on our payment service's own secure page. The portal never sees or stores your card or bank details. Prefer a check? Mail it to [HOA PO box] with the stub from your statement.</p>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { method: 'bank' };
+  }
+  renderVals() {
+    const base = 'display: flex; justify-content: space-between; align-items: center; gap: 12px; width: 100%; min-height: 68px; padding: 14px 16px; border-radius: 14px; background: #FFFFFF; font-family: inherit; color: #1B1F1D; cursor: pointer; box-sizing: border-box; ';
+    const on = 'border: 2px solid #2F5D50; box-shadow: 0 0 0 3px #E6EFEB;';
+    const off = 'border: 1px solid #C9CEC9;';
+    const m = this.state.method;
+    return {
+      bankStyle: base + (m === 'bank' ? on : off),
+      cardStyle: base + (m === 'card' ? on : off),
+      pickBank: () => this.setState({ method: 'bank' }),
+      pickCard: () => this.setState({ method: 'card' })
+    };
+  }
+}
+</script>
+</body>
+</html>

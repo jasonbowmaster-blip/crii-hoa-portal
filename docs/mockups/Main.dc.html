@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Home</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Space+Grotesk:wght@500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#2F5D50}a:hover{color:#1F4238}
+</style>
+</helmet>
+<div style="position: relative; width: 390px; height: 844px; overflow: hidden; background: #F6F7F4; font-family: Inter, system-ui, sans-serif; color: #1B1F1D; box-sizing: border-box">
+<div style="padding: 56px 20px 112px; display: flex; flex-direction: column; gap: 16px; box-sizing: border-box; height: 844px; overflow-y: auto">
+<header style="display: flex; flex-direction: column; gap: 4px">
+<p style="margin: 0; font-size: 13px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: #2F5D50">[HOA name]</p>
+<h1 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 30px; font-weight: 600; line-height: 1.15">Good evening, Pat</h1>
+<p style="margin: 0; font-size: 14px; color: #555C58">Lot 42 · 118 Sample Lane</p>
+</header>
+
+<section aria-label="Your balance" style="background: #FFFFFF; border: 1px solid #E3E6E1; border-radius: 16px; padding: 20px; display: flex; flex-direction: column; gap: 12px">
+<div style="display: flex; justify-content: space-between; align-items: center">
+<p style="margin: 0; font-size: 14px; font-weight: 600; color: #555C58">Your balance</p>
+<span style="font-size: 12px; font-weight: 600; color: #8A3F0F; background: #FBEADF; border-radius: 999px; padding: 4px 10px">Unpaid</span>
+</div>
+<p style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 36px; font-weight: 600">$[BALANCE]</p>
+<p style="margin: 0; font-size: 14px; color: #555C58">2027 dues plus any balance carried from before · due by [DUE DATE], no late fee before then</p>
+<a href="Pay.dc.html" style="display: flex; justify-content: center; align-items: center; height: 52px; border-radius: 12px; background: #2F5D50; color: #FFFFFF; font-size: 16px; font-weight: 600; text-decoration: none">Pay now</a>
+<a href="Bill.dc.html" style="display: flex; justify-content: center; align-items: center; min-height: 44px; font-size: 15px; font-weight: 600">See my bill and payment history</a>
+</section>
+
+<a href="Calendar.dc.html" style="display: flex; gap: 14px; align-items: center; background: #FFFFFF; border: 1px solid #E3E6E1; border-radius: 16px; padding: 16px; text-decoration: none; color: #1B1F1D">
+<div style="width: 52px; height: 56px; border-radius: 12px; background: #E6EFEB; display: flex; flex-direction: column; align-items: center; justify-content: center; flex-shrink: 0">
+<span style="font-size: 12px; font-weight: 600; color: #2F5D50">JAN</span>
+<span style="font-family: 'Space Grotesk', Inter, sans-serif; font-size: 22px; font-weight: 600; color: #1B1F1D">19</span>
+</div>
+<div style="display: flex; flex-direction: column; gap: 2px; min-width: 0">
+<span style="font-size: 12px; font-weight: 600; color: #555C58">NEXT UP</span>
+<span style="font-size: 16px; font-weight: 600">Board meeting</span>
+<span style="font-size: 14px; color: #555C58">Tue 7:00 PM · [LOCATION or video link]</span>
+</div>
+</a>
+
+<article style="background: #FFFFFF; border: 1px solid #E3E6E1; border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 6px">
+<span style="font-size: 12px; font-weight: 600; color: #555C58">ANNOUNCEMENT · 2 DAYS AGO</span>
+<h2 style="margin: 0; font-size: 17px; font-weight: 600">Tree work along the common area</h2>
+<p style="margin: 0; font-size: 14px; line-height: 1.45; color: #3D4440">Crews will trim trees along [STREET] on [DATE]. Please keep cars off that side of the street from 8 AM to 3 PM.</p>
+</article>
+
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px">
+<a href="Message.dc.html" style="display: flex; flex-direction: column; gap: 8px; background: #FFFFFF; border: 1px solid #E3E6E1; border-radius: 16px; padding: 16px; text-decoration: none; color: #1B1F1D; min-height: 92px; box-sizing: border-box">
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#2F5D50" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg>
+<span style="font-size: 15px; font-weight: 600">Message the board</span>
+</a>
+<a href="Documents.dc.html" style="display: flex; flex-direction: column; gap: 8px; background: #FFFFFF; border: 1px solid #E3E6E1; border-radius: 16px; padding: 16px; text-decoration: none; color: #1B1F1D; min-height: 92px; box-sizing: border-box">
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#2F5D50" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/></svg>
+<span style="font-size: 15px; font-weight: 600">Documents</span>
+</a>
+</div>
+
+<a href="Settings.dc.html" style="display: flex; justify-content: center; align-items: center; min-height: 44px; font-size: 15px; font-weight: 600">Notice and email settings</a>
+<p style="margin: 4px 0 0; font-size: 13px; color: #555C58; text-align: center">Questions? board@[our domain] · [HOA phone]</p>
+</div>
+
+<nav aria-label="Main" style="position: absolute; left: 0; right: 0; bottom: 0; height: 84px; background: #FFFFFF; border-top: 1px solid #E3E6E1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 8px 8px 24px; box-sizing: border-box">
+<a href="Main.dc.html" aria-current="page" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; text-decoration: none; color: #2F5D50; font-size: 12px; font-weight: 600"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg>Home</a>
+<a href="Bill.dc.html" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; text-decoration: none; color: #555C58; font-size: 12px; font-weight: 500"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/></svg>My bill</a>
+<a href="Documents.dc.html" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; text-decoration: none; color: #555C58; font-size: 12px; font-weight: 500"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/></svg>Documents</a>
+<a href="Message.dc.html" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; text-decoration: none; color: #555C58; font-size: 12px; font-weight: 500"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg>Message</a>
+</nav>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

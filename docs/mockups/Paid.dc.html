@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Payment received</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Space+Grotesk:wght@500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#2F5D50}a:hover{color:#1F4238}
+</style>
+</helmet>
+<div style="position: relative; width: 390px; height: 844px; overflow: hidden; background: #F6F7F4; font-family: Inter, system-ui, sans-serif; color: #1B1F1D; box-sizing: border-box; padding: 120px 24px 40px; display: flex; flex-direction: column; align-items: center; gap: 20px; text-align: center">
+<div style="width: 76px; height: 76px; border-radius: 999px; background: #E6EFEB; display: flex; align-items: center; justify-content: center">
+<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#2F5D50" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+</div>
+<h1 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 28px; font-weight: 600">Thank you, Pat</h1>
+<p style="margin: 0; font-size: 16px; line-height: 1.5; color: #3D4440">Your $[BALANCE] bank payment for Lot 42 is processing. Bank payments take 2 to 4 business days to clear; your bill shows Processing until then, then Paid. Card payments show Paid right away.</p>
+<section aria-label="Receipt" style="width: 100%; background: #FFFFFF; border: 1px solid #E3E6E1; border-radius: 16px; padding: 18px; display: flex; flex-direction: column; gap: 10px; text-align: left; box-sizing: border-box">
+<div style="display: flex; justify-content: space-between; font-size: 15px"><span style="color: #555C58">Status</span><span style="font-size: 12px; font-weight: 600; color: #7A5A00; background: #F9EEDA; border-radius: 999px; padding: 4px 10px">Processing</span></div>
+<div style="display: flex; justify-content: space-between; font-size: 15px"><span style="color: #555C58">Paid by</span><span>Bank account ending 0000</span></div>
+<div style="display: flex; justify-content: space-between; font-size: 15px"><span style="color: #555C58">Receipt</span><span>[RECEIPT NUMBER]</span></div>
+</section>
+<p style="margin: 0; font-size: 14px; line-height: 1.5; color: #555C58; text-align: left">If your bank returns the payment, your bill shows Unpaid again and we email you. No late fee applies while a payment is processing.</p>
+<a href="Main.dc.html" style="display: flex; justify-content: center; align-items: center; width: 100%; height: 54px; border-radius: 12px; background: #2F5D50; color: #FFFFFF; font-size: 16px; font-weight: 600; text-decoration: none">Back to home</a>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

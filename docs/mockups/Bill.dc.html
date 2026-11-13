@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>My bill</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Space+Grotesk:wght@500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#2F5D50}a:hover{color:#1F4238}
+</style>
+</helmet>
+<div style="position: relative; width: 390px; height: 844px; overflow: hidden; background: #F6F7F4; font-family: Inter, system-ui, sans-serif; color: #1B1F1D; box-sizing: border-box">
+<div style="padding: 56px 20px 112px; display: flex; flex-direction: column; gap: 14px; box-sizing: border-box; height: 844px; overflow-y: auto">
+<h1 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 28px; font-weight: 600">My bill</h1>
+<p style="margin: 0; font-size: 14px; color: #555C58">Lot 42 · 118 Sample Lane</p>
+<section style="background: #FFFFFF; border: 1px solid #E3E6E1; border-radius: 16px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px"><div style="display: flex; justify-content: space-between; align-items: center"><span style="font-size: 14px; font-weight: 600; color: #555C58">Balance</span><span style="font-size: 12px; font-weight: 600; color: #8A3F0F; background: #FBEADF; border-radius: 999px; padding: 4px 10px; white-space: nowrap">Unpaid</span></div><span style="font-family: 'Space Grotesk', Inter, sans-serif; font-size: 32px; font-weight: 600">$[BALANCE]</span><span style="font-size: 13px; color: #555C58">A payment that is still processing counts once it clears.</span><a href="Pay.dc.html" style="display: flex; justify-content: center; align-items: center; height: 50px; border-radius: 12px; background: #2F5D50; color: #FFFFFF; font-size: 16px; font-weight: 600; text-decoration: none">Pay now</a></section>
+<h2 style="font-size: 13px; font-weight: 600; letter-spacing: 0.04em; color: #555C58; margin: 6px 0 0">THIS YEAR</h2>
+<section style="background: #FFFFFF; border: 1px solid #E3E6E1; border-radius: 16px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; gap: 0; padding-top: 6px; padding-bottom: 6px"><div style="display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid #EEF0EC"><span style="display: flex; flex-direction: column; gap: 2px; min-width: 0"><span style="font-size: 15px; font-weight: 600">Carried from before Jan 1</span><span style="font-size: 13px; color: #555C58">Jan 1, 2027 · From the old system’s records</span></span><span style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px"><span style="font-size: 15px; font-weight: 600">$[CARRIED]</span></span></div><div style="display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid #EEF0EC"><span style="display: flex; flex-direction: column; gap: 2px; min-width: 0"><span style="font-size: 15px; font-weight: 600">2027 annual assessment</span><span style="font-size: 13px; color: #555C58">[BILL DATE] · Invoice [NUMBER], due [DUE DATE]</span></span><span style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px"><span style="font-size: 15px; font-weight: 600">$[AMOUNT]</span></span></div><div style="display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid #EEF0EC"><span style="display: flex; flex-direction: column; gap: 2px; min-width: 0"><span style="font-size: 15px; font-weight: 600">Bank payment</span><span style="font-size: 13px; color: #555C58">[DATE] · Ending 0000</span></span><span style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px"><span style="font-size: 15px; font-weight: 600">−$[PAYMENT]</span><span style="font-size: 12px; font-weight: 600; color: #7A5A00; background: #F9EEDA; border-radius: 999px; padding: 4px 10px; white-space: nowrap">Processing</span></span></div></section>
+<h2 style="font-size: 13px; font-weight: 600; letter-spacing: 0.04em; color: #555C58; margin: 6px 0 0">EARLIER</h2>
+<section style="background: #FFFFFF; border: 1px solid #E3E6E1; border-radius: 16px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; gap: 0; padding-top: 6px; padding-bottom: 6px"><div style="display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid #EEF0EC"><span style="display: flex; flex-direction: column; gap: 2px; min-width: 0"><span style="font-size: 15px; font-weight: 600">Check #881</span><span style="font-size: 13px; color: #555C58">Mar 2, 2026 · Deposit confirmed</span></span><span style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px"><span style="font-size: 15px; font-weight: 600">−$[AMOUNT]</span><span style="font-size: 12px; font-weight: 600; color: #2F5D50; background: #E6EFEB; border-radius: 999px; padding: 4px 10px; white-space: nowrap">Paid</span></span></div><div style="display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid #EEF0EC"><span style="display: flex; flex-direction: column; gap: 2px; min-width: 0"><span style="font-size: 15px; font-weight: 600">Bank payment</span><span style="font-size: 13px; color: #555C58">Feb 20, 2026 · Returned by the bank</span></span><span style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px"><span style="font-size: 15px; font-weight: 600">$0.00</span><span style="font-size: 12px; font-weight: 600; color: #8A3F0F; background: #FBEADF; border-radius: 999px; padding: 4px 10px; white-space: nowrap">Returned</span></span></div><div style="display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid #EEF0EC"><span style="display: flex; flex-direction: column; gap: 2px; min-width: 0"><span style="font-size: 15px; font-weight: 600">2026 annual assessment</span><span style="font-size: 13px; color: #555C58">Feb 14, 2026 · Invoice [NUMBER]</span></span><span style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px"><span style="font-size: 15px; font-weight: 600">$[AMOUNT]</span></span></div></section>
+<p style="margin: 0; font-size: 13px; line-height: 1.5; color: #555C58">Something look wrong? Message the board and pick Billing.</p>
+</div>
+<nav aria-label="Main" style="position: absolute; left: 0; right: 0; bottom: 0; height: 84px; background: #FFFFFF; border-top: 1px solid #E3E6E1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 8px 8px 24px; box-sizing: border-box">
+<a href="Main.dc.html" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; text-decoration: none; color: #555C58; font-size: 12px; font-weight: 500"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg>Home</a>
+<a href="Bill.dc.html" aria-current="page" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; text-decoration: none; color: #2F5D50; font-size: 12px; font-weight: 600"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/></svg>My bill</a>
+<a href="Documents.dc.html" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; text-decoration: none; color: #555C58; font-size: 12px; font-weight: 500"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/></svg>Documents</a>
+<a href="Message.dc.html" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; text-decoration: none; color: #555C58; font-size: 12px; font-weight: 500"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg>Message</a>
+</nav>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

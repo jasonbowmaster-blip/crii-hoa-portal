@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Board view</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Space+Grotesk:wght@500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#2F5D50}a:hover{color:#1F4238}
+</style>
+</helmet>
+<div style="position: relative; width: 390px; height: 844px; overflow: hidden; background: #F6F7F4; font-family: Inter, system-ui, sans-serif; color: #1B1F1D; box-sizing: border-box">
+<div style="padding: 56px 20px 32px; display: flex; flex-direction: column; gap: 14px; box-sizing: border-box; height: 844px; overflow-y: auto">
+<header style="display: flex; flex-direction: column; gap: 4px">
+<p style="margin: 0; font-size: 13px; font-weight: 600; letter-spacing: 0.04em; color: #8A3F0F">BOARD ONLY</p>
+<h1 style="margin: 0; font-family: 'Space Grotesk', Inter, sans-serif; font-size: 28px; font-weight: 600">Board view</h1>
+</header>
+
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px">
+<div style="background: #FFFFFF; border: 1px solid #E3E6E1; border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 4px">
+<span style="font-size: 13px; color: #555C58">Dues paid</span>
+<span style="font-family: 'Space Grotesk', Inter, sans-serif; font-size: 26px; font-weight: 600">96 <span style="font-size: 15px; font-weight: 500; color: #555C58">of 150</span></span>
+</div>
+<div style="background: #FFFFFF; border: 1px solid #E3E6E1; border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 4px">
+<span style="font-size: 13px; color: #555C58">Owners signed in</span>
+<span style="font-family: 'Space Grotesk', Inter, sans-serif; font-size: 26px; font-weight: 600">61 <span style="font-size: 15px; font-weight: 500; color: #555C58">of 150</span></span>
+</div>
+</div>
+
+<div style="display: flex; justify-content: space-between; align-items: baseline">
+<h2 style="margin: 4px 0 0; font-size: 17px; font-weight: 600">Needs a board decision</h2>
+<span style="font-size: 13px; color: #555C58">{{ openCount }} open</span>
+</div>
+<sc-for list="{{ items }}" as="it" hint-placeholder-count="4">
+<article style="background: #FFFFFF; border: 1px solid #E3E6E1; border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; justify-content: space-between; gap: 8px">
+<span style="font-size: 12px; font-weight: 600; color: #555C58">{{ it.kind }}</span>
+<span style="font-size: 12px; font-weight: 600; color: {{ it.flagColor }}">{{ it.flag }}</span>
+</div>
+<span style="font-size: 15px; font-weight: 600">{{ it.title }}</span>
+<span style="font-size: 14px; line-height: 1.45; color: #3D4440">{{ it.summary }}</span>
+<sc-if value="{{ it.open }}" hint-placeholder-val="{{ true }}">
+<div style="display: flex; gap: 8px">
+<button type="button" onClick="{{ it.approve }}" style="min-height: 44px; padding: 0 14px; border-radius: 10px; border: 0; background: #2F5D50; color: #FFFFFF; font-size: 14px; font-weight: 600; font-family: inherit; cursor: pointer">{{ it.action }}</button>
+<button type="button" style="min-height: 44px; padding: 0 14px; border-radius: 10px; border: 1px solid #C9CEC9; background: #FFFFFF; color: #2F5D50; font-size: 14px; font-weight: 600; font-family: inherit; cursor: pointer">{{ it.alt }}</button>
+</div>
+</sc-if>
+<sc-if value="{{ it.done }}" hint-placeholder-val="{{ false }}">
+<span style="font-size: 14px; font-weight: 600; color: #2F5D50">{{ it.doneText }}</span>
+</sc-if>
+</article>
+</sc-for>
+
+<div style="background: #E6EFEB; border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px">
+<span style="font-size: 15px; font-weight: 600">Message queue this week</span>
+<span style="font-size: 14px; line-height: 1.45; color: #2B3A34">18 in, 14 answered by board members (11 using approved templates), 4 waiting, oldest 1 business day. Every reply is sent by a person. Weekly digest emailed Monday.</span>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px">
+<button type="button" style="min-height: 52px; border-radius: 12px; border: 1px solid #C9CEC9; background: #FFFFFF; font-size: 14px; font-weight: 600; font-family: inherit; color: #1B1F1D; cursor: pointer">Post announcement</button>
+<button type="button" style="min-height: 52px; border-radius: 12px; border: 1px solid #C9CEC9; background: #FFFFFF; font-size: 14px; font-weight: 600; font-family: inherit; color: #1B1F1D; cursor: pointer">Upload document</button>
+<button type="button" style="min-height: 52px; border-radius: 12px; border: 1px solid #C9CEC9; background: #FFFFFF; font-size: 14px; font-weight: 600; font-family: inherit; color: #1B1F1D; cursor: pointer">Mail a notice</button>
+<button type="button" style="min-height: 52px; border-radius: 12px; border: 1px solid #C9CEC9; background: #FFFFFF; font-size: 14px; font-weight: 600; font-family: inherit; color: #1B1F1D; cursor: pointer">Reply templates</button>
+</div>
+<a href="Main.dc.html" style="font-size: 15px; font-weight: 600; text-align: center; min-height: 44px; display: flex; align-items: center; justify-content: center">See the owner home screen</a>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { done: {} };
+  }
+  renderVals() {
+    const list = [
+      { id: 'chk', kind: 'CHECK · LOT 23', flag: 'Needs a second person', flagColor: '#8A3F0F', title: 'Check #1042 for $[AMOUNT]', summary: 'Logged by the treasurer on [DATE]. A second board member confirms it is on the bank deposit before Lot 23 shows Paid.', action: 'Confirm deposit', doneText: 'Deposit confirmed · Lot 23 shows Paid' },
+      { id: 'q', kind: 'QUESTION · LOT 61', flag: 'Template fits', flagColor: '#2F5D50', title: 'When is the next board meeting?', summary: 'Suggested template: Meeting times. Fills in the next date and link from the calendar.', action: 'Send template reply', doneText: 'Sent by you from the template' },
+      { id: 'pay', kind: 'BILLING · LOT 88', flag: 'Draft ready', flagColor: '#2F5D50', title: 'Asks to split dues into two payments', summary: 'Draft reply offers the board-approved two-payment option.', action: 'Approve and send', doneText: 'Sent with your approval' },
+      { id: 'rec', kind: 'RECORDS REQUEST · LOT 5', flag: '8 business days left', flagColor: '#8A3F0F', title: 'Wants last year’s bank statements', summary: 'Virginia allows 10 business days. Draft lists what we will share and the copy fee schedule.', action: 'Approve and send', doneText: 'Sent with your approval' }
+    ];
+    const done = this.state.done;
+    return {
+      openCount: list.filter((x) => !done[x.id]).length,
+      items: list.map((x) => ({
+        alt: x.id === 'chk' ? 'Not on the deposit' : (x.id === 'q' ? 'Write my own' : 'Edit draft'),
+        ...x,
+        open: !done[x.id],
+        done: !!done[x.id],
+        approve: () => this.setState({ done: { ...this.state.done, [x.id]: true } })
+      }))
+    };
+  }
+}
+</script>
+</body>
+</html>
