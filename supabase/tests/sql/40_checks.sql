@@ -34,7 +34,9 @@ select tests.as_user('b0000000-0000-4000-8000-000000000004');
 select tests.eq((select status from public.resolve_task((select id from public.board_tasks where ref_id = (select id from c3)), 'reject', 'bounced')), 'done', 'reject on a check task is a recorded decision');
 select tests.eq((select state from public.checks where id = (select id from c3)), 'returned', 'reject marks the check returned');
 reset role;
-select tests.eq((select count(*) from public.ledger_entries where external_ref = 'check:' || (select id from c3)), 0::bigint, 'returned check adds no ledger row');
+select tests.ok((select count(*) = 1 and bool_and(status = 'returned' and amount_cents = -5000) from public.ledger_entries where external_ref = 'check:' || (select id from c3)), 'returned check leaves one returned ledger row');
+select tests.eq((select balance_cents from public.lot_balances where lot_id = '00000000-0000-4000-8000-000000000043'), 17500::bigint, 'returned check does not change the balance');
+select tests.eq((select count(*) from public.board_tasks where kind = 'payment_returned' and ref_id = (select id from c3) and status = 'open'), 1::bigint, 'returned check opens a payment_returned task');
 
 -- non-board cannot call
 insert into auth.users (id, email, email_confirmed_at) values ('a0000000-0000-4000-8000-0000000000ff','stranger@example.net', now());
