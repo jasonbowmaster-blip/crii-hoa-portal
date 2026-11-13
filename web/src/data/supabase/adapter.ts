@@ -154,8 +154,8 @@ export function createSupabaseApi(url: string, anonKey: string): PortalApi {
 
     listEvents,
 
-    async sendMessage({ topic, body }) {
-      const { data, error } = await sb.rpc('send_message', { p_topic: topic, p_body: body });
+    async sendMessage({ topic, body, lotId }) {
+      const { data, error } = await sb.rpc('send_message', { p_topic: topic, p_body: body, p_lot_id: lotId ?? null });
       if (error) throw new Error(error.message);
       return one<Message>(data);
     },
@@ -204,8 +204,8 @@ export function createSupabaseApi(url: string, anonKey: string): PortalApi {
 
     listTasks,
 
-    async resolveTask(id, action, note) {
-      const { data, error } = await sb.rpc('resolve_task', { p_task_id: id, p_action: action, p_note: note ?? null });
+    async resolveTask(id, action, note, ownerId) {
+      const { data, error } = await sb.rpc('resolve_task', { p_task_id: id, p_action: action, p_note: note ?? null, p_owner_id: ownerId ?? null });
       if (error) throw new Error(error.message);
       return one<BoardTask>(data);
     },

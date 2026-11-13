@@ -14,7 +14,8 @@ export interface InvoiceDraft {
   carried_cents: number;       // balance carried from before (may be negative = credit); processing payments are NOT subtracted, like lot_balances
   processing_cents: number;    // bank payments still processing for this lot: shown, never subtracted
   total_cents: number;         // what the owner is asked to pay; never below 0
-  credit_left_cents: number;   // credit still left after this year's dues (0 when none)
+  credit_left_cents: number;   // credit still left after this year's dues (0 when none). When > 0 the lot gets NO invoice (no_invoice)
+  no_invoice: boolean;         // the carried credit is larger than the dues: nothing to bill, the credit stays in the ledger
   lines: { description: string; amount_cents: number }[];
   delivery: 'email' | 'paper';
   email_to: string | null;     // set only when delivery is 'email'
@@ -22,7 +23,38 @@ export interface InvoiceDraft {
 
 export interface BillRun {
   drafts: InvoiceDraft[];
-  totals: { lots: number; email: number; paper: number; billed_cents: number; processing_cents: number };
+  totals: { lots: number; email: number; paper: number; billed_cents: number; processing_cents: number; credit_only: number };
+}
+
+// One ledger row as the edge function reads it, with the number of the invoice it is linked to (if any).
+export interface YearLedgerRow {
+  lot_id: string;
+  amount_cents: number;
+  status: string;
+  external_ref: string | null;
+  invoice_number: string | null;
+}
+
+// What this year's own run already put in the ledger, per lot, so a re-run or a preview taken after the run does not
+// fold it into the carried balance (which would turn a paid-up lot into a "credit carried forward").
+//  posted:     every row that counts in lot_balances (not returned, not a processing payment) and belongs to this year:
+//              the charge (external_ref inv:YEAR-nnn, with or without an invoice behind it) and any payment, credit or
+//              refund linked to an invoice numbered YEAR-nnn.
+//  processing: bank payments still processing against this year's invoices, as positive amounts.
+export function summarizeYearRows(rows: YearLedgerRow[], year: number): { posted: BalanceRow[]; processing: BalanceRow[] } {
+  const posted = new Map<string, number>();
+  const processing = new Map<string, number>();
+  for (const r of rows) {
+    const ours = (r.external_ref ?? '').startsWith(`inv:${year}-`) || (r.invoice_number ?? '').startsWith(`${year}-`);
+    if (!ours) continue;
+    if (r.status === 'processing' && r.amount_cents < 0) {
+      processing.set(r.lot_id, (processing.get(r.lot_id) ?? 0) - r.amount_cents);
+    } else if (r.status !== 'returned') {
+      posted.set(r.lot_id, (posted.get(r.lot_id) ?? 0) + r.amount_cents);
+    }
+  }
+  const out = (m: Map<string, number>): BalanceRow[] => [...m].map(([lot_id, balance_cents]) => ({ lot_id, balance_cents }));
+  return { posted: out(posted), processing: out(processing) };
 }
 
 export function billRunKey(year: number, lotNumber: number): string {
@@ -65,9 +97,10 @@ export function buildBillRun(
       amount_cents: params.amount_cents,
       carried_cents: carried,
       processing_cents: processing,
-      // A credit bigger than the dues gives a zero invoice, not a negative one.
+      // A credit bigger than the dues gives no invoice at all (never a negative one); exactly equal gives a zero invoice.
       total_cents: Math.max(0, params.amount_cents + carried),
       credit_left_cents: Math.max(0, -(params.amount_cents + carried)),
+      no_invoice: params.amount_cents + carried < 0,
       lines,
       delivery: emailOwner ? 'email' : 'paper',
       email_to: emailOwner ? emailOwner.email : null,
@@ -77,7 +110,7 @@ export function buildBillRun(
   return {
     drafts,
     totals: { lots: drafts.length, email, paper: drafts.length - email, billed_cents: drafts.reduce((s, d) => s + d.total_cents, 0),
-      processing_cents: drafts.reduce((s, d) => s + d.processing_cents, 0) },
+      processing_cents: drafts.reduce((s, d) => s + d.processing_cents, 0), credit_only: drafts.filter((d) => d.no_invoice).length },
   };
 }
 
@@ -90,6 +123,7 @@ export function toPreview(run: BillRun, params: BillRunParams) {
     lots: run.drafts.map((d) => ({
       lot_id: d.lot_id, lot_number: d.lot_number, owner_name: d.owner_name,
       carried_cents: d.carried_cents, processing_cents: d.processing_cents, total_cents: d.total_cents, delivery: d.delivery,
+      credit_left_cents: d.credit_left_cents, no_invoice: d.no_invoice,
     })),
     totals: run.totals,
   };

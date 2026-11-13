@@ -26,14 +26,14 @@ export interface PortalApi {
   listDocuments(): Promise<DocumentItem[]>;        // filtered by audience server-side
   openDocument(id: string): Promise<string>;       // short-lived signed URL
   listEvents(): Promise<HoaEvent[]>;
-  sendMessage(input: { topic: MessageTopic; body: string }): Promise<Message>;
+  sendMessage(input: { topic: MessageTopic; body: string; lotId?: string }): Promise<Message>; // lotId: one of my lots (owners of several); default is the first
   listMyMessages(): Promise<Message[]>;
   updateNoticePrefs(input: { email_notice_consent: boolean; board_notice_request: boolean }): Promise<Owner>;
 
   // --- Board (every call is refused server-side for non-board users) ---
   getBoardDashboard(): Promise<BoardDashboard>;
   listTasks(): Promise<BoardTask[]>;
-  resolveTask(id: string, action: 'approve' | 'reject' | 'dismiss', note?: string): Promise<BoardTask>;
+  resolveTask(id: string, action: 'approve' | 'reject' | 'dismiss', note?: string, ownerId?: string): Promise<BoardTask>; // ownerId: for a claim on a lot with several owners, which roster owner the sign-in belongs to
   listLots(query?: string): Promise<LotRow[]>;
   listInbox(filter?: { status?: Message['status']; topic?: MessageTopic }): Promise<Message[]>;
   listTemplates(): Promise<ReplyTemplate[]>;

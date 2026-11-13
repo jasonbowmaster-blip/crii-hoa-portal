@@ -94,10 +94,14 @@ export function createDemoApi(opts: DemoOptions = {}): PortalApi {
   const requireBoard = () => { if (!isBoard()) throw new Error('This page is for board members only.'); };
   // Owner records and lots linked to this sign-in. Empty for the 'unlinked' persona.
   const myOwners = (): Owner[] => (state.persona === 'unlinked' ? [] : state.owners.filter((o) => o.user_id === PAT_USER));
+  // ends_on is the LAST day of access (same rule as my_lot_ids() / my_owner_ids() in the database)
+  const today = () => nowISO().slice(0, 10);
+  const isCurrent = (lo: { starts_on: string; ends_on: string | null }) => lo.starts_on <= today() && (!lo.ends_on || lo.ends_on >= today());
+  const hasCurrentLot = (ownerId: string) => state.lot_owners.some((lo) => lo.owner_id === ownerId && isCurrent(lo));
   const myLots = () => {
     const ids = new Set(myOwners().map((o) => o.id));
     return state.lot_owners
-      .filter((lo) => ids.has(lo.owner_id) && !lo.ends_on)
+      .filter((lo) => ids.has(lo.owner_id) && isCurrent(lo))
       .sort((a, b) => a.starts_on.localeCompare(b.starts_on) || a.lot_id.localeCompare(b.lot_id))
       .map((lo) => state.lots.find((l) => l.id === lo.lot_id)!)
       .filter(Boolean);
@@ -112,7 +116,7 @@ export function createDemoApi(opts: DemoOptions = {}): PortalApi {
   const lotInvoices = (lotId: string) => state.invoices.filter((i) => i.lot_id === lotId);
   const balanceOf = (lotId: string): BalanceSummary => summarizeBalance(lotEntries(lotId), lotInvoices(lotId));
   const ownersOf = (lotId: string): Owner[] =>
-    state.lot_owners.filter((lo) => lo.lot_id === lotId && !lo.ends_on)
+    state.lot_owners.filter((lo) => lo.lot_id === lotId && isCurrent(lo))
       .map((lo) => state.owners.find((o) => o.id === lo.owner_id)!).filter(Boolean);
   const me = () => {
     const o = myOwners()[0];
@@ -168,7 +172,8 @@ export function createDemoApi(opts: DemoOptions = {}): PortalApi {
         .sort((x, y) => Number(y.amount_cents === check.amount_cents) - Number(x.amount_cents === check.amount_cents)
           || x.due_on.localeCompare(y.due_on) || x.number.localeCompare(y.number))[0];
       state.ledger.push({
-        id: newId('le'), lot_id: check.lot_id, posted_on: nowISO().slice(0, 10), kind: 'payment',
+        // dated the day the HOA received the check, not the day a second person confirmed it (mirrors confirm_check_deposit, 0005)
+        id: newId('le'), lot_id: check.lot_id, posted_on: check.received_on, kind: 'payment',
         description: `Check #${check.check_number}`, detail: 'Deposit confirmed',
         amount_cents: -check.amount_cents, status: 'cleared', method: 'check', invoice_id: inv?.id ?? null,
         external_ref: `check:${check.id}`,
@@ -206,6 +211,35 @@ export function createDemoApi(opts: DemoOptions = {}): PortalApi {
       summary: `The check for ${formatCents(check.amount_cents)} did not clear. The lot shows unpaid again. Contact the owner.${note?.trim() ? ` Note: ${note.trim()}` : ''}`,
       due_at: null, ref_id: check.id,
     });
+  }
+
+  // Approving a claim attaches the new sign-in to the EXISTING roster owner of the lot (mirrors resolve_claim_request, 0005):
+  // one current owner: that one; several: the board names which; none at all: a new owner record. An owner already
+  // linked to a different sign-in is refused. Throws before anything changes.
+  function attachClaim(claim: ClaimRequest, ownerId?: string) {
+    const current = state.lot_owners.filter((lo) => lo.lot_id === claim.lot_id && isCurrent(lo))
+      .map((lo) => state.owners.find((o) => o.id === lo.owner_id)!).filter(Boolean);
+    let owner: Owner | undefined;
+    if (ownerId) {
+      owner = current.find((o) => o.id === ownerId);
+      if (!owner) throw new Error('That person is not a current owner of this lot.');
+    } else if (current.length === 1) {
+      owner = current[0];
+    } else if (current.length > 1) {
+      throw new Error('This lot has several owners. Choose which one this sign-in belongs to.');
+    }
+    if (owner) {
+      if (owner.user_id && owner.user_id !== PAT_USER) throw new Error('That owner is already linked to another sign-in. Clear the link on the roster first.');
+      owner.user_id = PAT_USER;
+      return;
+    }
+    const lot = state.lots.find((l) => l.id === claim.lot_id)!;
+    const created: Owner = {
+      id: newId('own'), full_name: claim.email, first_name: '', email: claim.email, phone: null, mailing_address: lot.street_address,
+      email_notice_consent: false, email_notice_consent_at: null, board_notice_request: false, user_id: PAT_USER, last_sign_in_at: nowISO(),
+    };
+    state.owners.push(created);
+    state.lot_owners.push({ lot_id: claim.lot_id, owner_id: created.id, starts_on: today(), ends_on: null });
   }
 
   function useTemplate(messageId: string, templateId: string): Message {
@@ -307,13 +341,17 @@ export function createDemoApi(opts: DemoOptions = {}): PortalApi {
       return clone(state.events.filter((e) => signedIn() || e.is_public).sort((a, b) => a.starts_at.localeCompare(b.starts_at)));
     },
 
-    async sendMessage(input: { topic: MessageTopic; body: string }) {
+    async sendMessage(input: { topic: MessageTopic; body: string; lotId?: string }) {
       await wait(); requireSignedIn();
       const body = input.body.trim();
       if (!body) throw new Error('Please write a message first.');
-      const lot = myLot();
+      const first = myLot();
+      // an optional lot must be one of my current lots; left out, the first one
+      const lot = input.lotId ? myLots().find((l) => l.id === input.lotId) : first;
+      if (!lot) throw new Error('You are not a current owner of that lot.');
+      const ownerHere = myOwners().find((o) => state.lot_owners.some((lo) => lo.owner_id === o.id && lo.lot_id === lot.id && isCurrent(lo))) ?? me();
       const m: Message = {
-        id: newId('msg'), lot_id: lot.id, owner_id: me().id, topic: input.topic,
+        id: newId('msg'), lot_id: lot.id, owner_id: ownerHere.id, topic: input.topic,
         subject: body.length > 60 ? `${body.slice(0, 57)}...` : body, body, status: 'acknowledged',
         created_at: nowISO(), answered_at: null,
         due_at: input.topic === 'records' ? addBusinessDays(nowISO(), 10) : null,
@@ -329,7 +367,7 @@ export function createDemoApi(opts: DemoOptions = {}): PortalApi {
 
     async listMyMessages() {
       await wait(); requireSignedIn();
-      return clone(state.messages.filter((m) => myOwners().some((o) => o.id === m.owner_id)).sort((a, b) => b.created_at.localeCompare(a.created_at)));
+      return clone(state.messages.filter((m) => myOwners().some((o) => o.id === m.owner_id && hasCurrentLot(o.id))).sort((a, b) => b.created_at.localeCompare(a.created_at)));
     },
 
     async updateNoticePrefs(input) {
@@ -366,7 +404,7 @@ export function createDemoApi(opts: DemoOptions = {}): PortalApi {
       return clone([...open, ...closed]);
     },
 
-    async resolveTask(id, action, note) {
+    async resolveTask(id, action, note, ownerId) {
       await wait(); requireBoard();
       const task = state.tasks.find((t) => t.id === id);
       if (!task) throw new Error('That task was not found.');
@@ -391,11 +429,7 @@ export function createDemoApi(opts: DemoOptions = {}): PortalApi {
         else if ((task.kind === 'draft_approval' || task.kind === 'records_request') && m) markAnswered(m);
         if (task.kind === 'claim_attach') {
           const claim = state.claims.find((c) => c.id === task.ref_id);
-          if (claim) {
-            claim.status = 'approved';
-            const owner = ownersOf(claim.lot_id)[0];
-            if (owner) owner.email = claim.email;
-          }
+          if (claim) { attachClaim(claim, ownerId); claim.status = 'approved'; }
         }
         task.status = 'done';
       }
@@ -475,22 +509,31 @@ export function createDemoApi(opts: DemoOptions = {}): PortalApi {
       await wait(); requireBoard();
       const yearInvoiceIds = new Set(state.invoices.filter((i) => i.number.startsWith(`${input.year}-`)).map((i) => i.id));
       const lots: BillRunPreview['lots'] = [];
-      let email = 0; let paper = 0; let billed = 0; let processingTotal = 0;
+      let email = 0; let paper = 0; let billed = 0; let processingTotal = 0; let creditOnly = 0;
       for (const lot of state.lots) {
         const owners = ownersOf(lot.id);
-        const owner = owners[0];
-        // Carried = what the lot already owes, not counting this year's own invoice and its payments.
-        const carriedEntries = lotEntries(lot.id).filter((e) => !(e.invoice_id && yearInvoiceIds.has(e.invoice_id)));
+        const owner = owners.find((o) => o.email_notice_consent && o.email && o.email.trim() !== '');
+        // Carried = what the lot already owes, not counting this year's own run: its charge (even one with no invoice
+        // behind it, a credit-only lot) and every payment, credit or refund linked to this year's invoices.
+        const carriedEntries = lotEntries(lot.id).filter((e) => !((e.invoice_id && yearInvoiceIds.has(e.invoice_id)) || (e.external_ref ?? '').startsWith(`inv:${input.year}-`)));
         const carriedSummary = summarizeBalance(carriedEntries, []);
         const carried = carriedSummary.balance_cents;            // processing payments are NOT subtracted (as in lot_balances)
         const processing = carriedSummary.processing_cents;     // shown separately so the board can see it
-        const delivery = owner?.email_notice_consent && owner.email ? 'email' : 'paper';
-        const total = carried + input.amount_cents;
-        lots.push({ lot_id: lot.id, lot_number: lot.lot_number, owner_name: owners.map((o) => o.full_name).join(' and '), carried_cents: carried, processing_cents: processing, total_cents: total, delivery });
+        const delivery = owner ? 'email' : 'paper';
+        // A credit bigger than the dues means no invoice, never a negative one (mirrors apply_bill_run / buildBillRun).
+        const due = carried + input.amount_cents;
+        const total = Math.max(0, due);
+        const creditLeft = Math.max(0, -due);
+        const noInvoice = due < 0;
+        lots.push({
+          lot_id: lot.id, lot_number: lot.lot_number, owner_name: owners.map((o) => o.full_name).join(' and '), carried_cents: carried,
+          processing_cents: processing, total_cents: total, delivery, credit_left_cents: creditLeft, no_invoice: noInvoice,
+        });
         if (delivery === 'email') email++; else paper++;
+        if (noInvoice) creditOnly++;
         billed += total; processingTotal += processing;
       }
-      return { year: input.year, due_on: input.due_on, amount_cents: input.amount_cents, lots, totals: { lots: lots.length, email, paper, billed_cents: billed, processing_cents: processingTotal } };
+      return { year: input.year, due_on: input.due_on, amount_cents: input.amount_cents, lots, totals: { lots: lots.length, email, paper, billed_cents: billed, processing_cents: processingTotal, credit_only: creditOnly } };
     },
 
     async postAnnouncement(input): Promise<Announcement> {
@@ -502,6 +545,7 @@ export function createDemoApi(opts: DemoOptions = {}): PortalApi {
 
     async addDocument(input: { folder: DocumentFolder; title: string; audience: Audience; file: File | null; is_draft: boolean }): Promise<DocumentItem> {
       await wait(); requireBoard();
+      if (input.folder === 'board_packets' && input.audience !== 'board') throw new Error('Board packets are for the board only.');   // same rule as the database
       const id = newId('doc');
       const d: DocumentItem = { id, folder: input.folder, title: input.title, audience: input.audience, is_draft: input.is_draft, posted_on: nowISO().slice(0, 10), storage_path: `demo/${input.folder}/${id}.pdf` };
       state.documents.push(d); save();

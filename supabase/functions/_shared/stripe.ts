@@ -14,13 +14,17 @@ function toHex(buf: ArrayBuffer): string {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-// Compare two strings without stopping at the first difference.
+// Compare two strings without stopping at the first difference AND without the running time depending on their
+// lengths: the loop always covers COMPARE_BYTES bytes of both sides (shorter values read as zero bytes), and the real
+// lengths are folded into the result so padding with zeros cannot make two different values equal. Anything longer
+// than COMPARE_BYTES is never equal (a signature is 64 hex characters), and costs the same as everything else.
+export const COMPARE_BYTES = 128;
 export function constantTimeEqual(a: string, b: string): boolean {
   const x = encoder.encode(a);
   const y = encoder.encode(b);
   let diff = x.length ^ y.length;
-  const len = Math.max(x.length, y.length);
-  for (let i = 0; i < len; i++) diff |= (x[i] ?? 0) ^ (y[i] ?? 0);
+  if (x.length > COMPARE_BYTES || y.length > COMPARE_BYTES) diff |= 1;
+  for (let i = 0; i < COMPARE_BYTES; i++) diff |= (x[i] ?? 0) ^ (y[i] ?? 0);
   return diff === 0;
 }
 
@@ -271,4 +275,32 @@ function refundRow(r: Record<string, any>, date: string, method: PayMethod | nul
     external_ref: r.id, posted_on: date, kind: 'refund', description: 'Refund', detail: null,
     amount_cents: Math.abs(r.amount ?? 0), status: failed ? 'returned' : 'cleared', method,
   };
+}
+
+// ---- What the webhook does with a mapped event ----
+
+// Events that are normal noise (a type we do not use, a plain card decline): answered 200 and not kept.
+const BENIGN_IGNORES = new Set(['event_type_not_used', 'not_an_ach_return']);
+
+// After this many deliveries that could not be tied to a lot, stop asking Stripe to retry: the event stays in
+// stripe_quarantine for the board and the webhook answers 200.
+export const MAX_UNMATCHED_ATTEMPTS = 5;
+
+export type Disposition = 'apply' | 'ignore' | 'quarantine';
+
+// apply: send to apply_stripe_event. ignore: harmless, 200. quarantine: an event we should have been able to use
+// (no payment reference, refund without details) is recorded for the board instead of being dropped with a 200.
+export function disposition(changes: Pick<StripeChanges, 'handled' | 'ignored_reason'>): Disposition {
+  if (changes.handled) return 'apply';
+  return BENIGN_IGNORES.has(changes.ignored_reason ?? '') ? 'ignore' : 'quarantine';
+}
+
+// The webhook's answer to the result of apply_stripe_event.
+//  applied or duplicate: 200.  Not applied because no lot was found: 500 (Stripe retries; the invoice link may just be
+//  late) until the event has been quarantined MAX_UNMATCHED_ATTEMPTS times, then 200 (it waits in stripe_quarantine).
+export function applyResultStatus(data: { applied?: boolean; duplicate?: boolean; quarantined?: boolean; attempts?: number } | null | undefined): number {
+  if (data?.applied === false && !data?.duplicate) {
+    return data?.quarantined && (data.attempts ?? 0) >= MAX_UNMATCHED_ATTEMPTS ? 200 : 500;
+  }
+  return 200;
 }

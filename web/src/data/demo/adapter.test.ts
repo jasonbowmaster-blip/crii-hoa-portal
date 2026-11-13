@@ -80,7 +80,9 @@ describe('documents', () => {
   it('has every folder and hides board documents from owners', async () => {
     const owner = await make('owner').listDocuments();
     const board = await make('board').listDocuments();
-    for (const folder of Object.keys(FOLDER_LABELS)) expect(owner.some((d) => d.folder === folder)).toBe(true);
+    // board packets are board-only (database rule), so owners see every folder except that one
+    for (const folder of Object.keys(FOLDER_LABELS)) expect(owner.some((d) => d.folder === folder)).toBe(folder !== 'board_packets');
+    for (const folder of Object.keys(FOLDER_LABELS)) expect(board.some((d) => d.folder === folder)).toBe(true);
     expect(owner.some((d) => d.audience === 'board')).toBe(false);
     expect(board.some((d) => d.audience === 'board')).toBe(true);
   });
@@ -362,5 +364,109 @@ describe('access: unlinked sign-in, shared household, drafts', () => {
     const dash = await make('board').getBoardDashboard();
     const lots = await make('board').listLots();
     expect(dash.lots_paid).toBe(lots.filter((l) => l.state === 'paid' || l.state === 'credit').length);
+  });
+});
+
+describe('review fixes (mirror 0005_review.sql)', () => {
+  const KEY = 'hoa-portal-demo-v1';
+  const store = (seed: ReturnType<typeof createSeed>) => window.localStorage.setItem(KEY, JSON.stringify(seed));
+
+  it('a deposited check posts on the day it was received, not the day it was confirmed', async () => {
+    const api = make('board');
+    const c = await api.logCheck({ lot_id: 'lot-042', check_number: '3001', amount_cents: 20000, received_on: '2027-01-05' });
+    await api.confirmCheckDeposit(c.id, 'deposited');
+    const row = (await api.getMyLedger()).entries.find((e) => e.external_ref === `check:${c.id}`)!;
+    expect(row.posted_on).toBe('2027-01-05');
+    expect(row.posted_on).not.toBe(DEMO_NOW.slice(0, 10));
+  });
+
+  it('board packets can only be board-only', async () => {
+    const api = make('board');
+    await expect(api.addDocument({ folder: 'board_packets', title: 'Packet', audience: 'owners', file: null, is_draft: false })).rejects.toThrow(/board only/i);
+    const ok = await api.addDocument({ folder: 'board_packets', title: 'Packet', audience: 'board', file: null, is_draft: false });
+    expect(ok.audience).toBe('board');
+    expect((await make('owner').listDocuments()).some((d) => d.folder === 'board_packets')).toBe(false);
+  });
+
+  it('a former owner loses the lot and the messages the day after ends_on, not on it', async () => {
+    const seed = createSeed('owner');
+    const lo = seed.lot_owners.find((x) => x.owner_id === 'owner-042')!;
+    lo.ends_on = DEMO_NOW.slice(0, 10);                          // last day: still an owner
+    store(seed);
+    expect((await make('owner').getSession())!.lot?.lot_number).toBe(42);
+    expect((await make('owner').listMyMessages()).length).toBeGreaterThan(0);
+    lo.ends_on = '2027-01-12';                                   // yesterday: gone
+    store(seed);
+    expect((await make('owner').getSession())!.lot).toBeNull();
+    expect(await make('owner').listMyMessages()).toEqual([]);
+  });
+
+  it('sendMessage takes an optional lot that must be one of mine', async () => {
+    const seed = createSeed('owner');
+    const second = seed.owners.find((o) => o.id === 'owner-043')!;
+    second.user_id = PAT_USER;
+    store(seed);
+    const api = make('owner');
+    const first = await api.sendMessage({ topic: 'question', body: 'default' });
+    expect(first.lot_id).toBe('lot-042');
+    const chosen = await api.sendMessage({ topic: 'question', body: 'second lot', lotId: 'lot-043' });
+    expect(chosen.lot_id).toBe('lot-043');
+    expect(chosen.owner_id).toBe('owner-043');
+    await expect(api.sendMessage({ topic: 'question', body: 'forged', lotId: 'lot-044' })).rejects.toThrow(/not a current owner/);
+  });
+
+  it('a credit larger than the dues means no invoice: carried, listed, never negative', async () => {
+    const board = make('board');
+    const paidLot = (await board.listLots()).find((r) => r.state === 'paid' && r.balance_cents === 0 && r.lot.lot_number !== 42)!;
+    const c = await board.logCheck({ lot_id: paidLot.lot.id, check_number: '3100', amount_cents: 25000, received_on: '2027-01-05' });
+    await board.confirmCheckDeposit(c.id, 'deposited');
+    const p = await board.previewBillRun({ year: 2028, amount_cents: 18000, due_on: '2028-05-15' });
+    const row = p.lots.find((l) => l.lot_id === paidLot.lot.id)!;
+    expect(row).toMatchObject({ carried_cents: -25000, total_cents: 0, credit_left_cents: 7000, no_invoice: true });
+    expect(p.totals.credit_only).toBe(1);
+    expect(p.lots.every((l) => l.total_cents >= 0)).toBe(true);
+    expect(p.totals.billed_cents).toBe(p.lots.reduce((s, l) => s + l.total_cents, 0));
+  });
+
+  it('previewing the run again after this year\'s charge and payments are posted carries nothing new', async () => {
+    const board = make('board');
+    const a = await board.previewBillRun({ year: 2027, amount_cents: 17500, due_on: '2027-05-15' });
+    const b = await board.previewBillRun({ year: 2027, amount_cents: 17500, due_on: '2027-05-15' });
+    expect(b).toEqual(a);
+    expect(a.lots.filter((l) => l.carried_cents < 0)).toEqual([]);   // paid lots do not show as carrying a credit
+  });
+
+  it('claim approval attaches to the existing roster owner; several owners need a choice', async () => {
+    // one roster owner: the sign-in goes onto that record, no second owner appears
+    const seed = createSeed('board');
+    const lot43 = seed.lots.find((l) => l.id === 'lot-043')!;
+    seed.owners.find((o) => o.id === 'owner-043')!.user_id = null;
+    seed.claims.push({ id: 'claim-x', lot_id: lot43.id, email: 'new.person@example.com', created_at: DEMO_NOW, status: 'pending' });
+    seed.tasks.push({ id: 'task-claim-x', kind: 'claim_attach', lot_id: lot43.id, title: 'Claim', summary: 'x', status: 'open', created_at: DEMO_NOW, due_at: null, ref_id: 'claim-x', resolved_by: null, resolved_at: null });
+    store(seed);
+    const api = make('board');
+    const ownersBefore = seed.owners.length;
+    await api.resolveTask('task-claim-x', 'approve');
+    const after = JSON.parse(window.localStorage.getItem(KEY)!) as ReturnType<typeof createSeed>;
+    expect(after.owners).toHaveLength(ownersBefore);
+    expect(after.owners.find((o) => o.id === 'owner-043')!.user_id).toBe(PAT_USER);
+    expect(after.claims.find((c) => c.id === 'claim-x')!.status).toBe('approved');
+
+    // two roster owners: refused without a choice, nothing changes; a chosen owner of the lot works; a stranger does not
+    const seed2 = createSeed('board');
+    seed2.owners.push({ ...seed2.owners.find((o) => o.id === 'owner-043')!, id: 'owner-043b', user_id: null, full_name: 'Second Owner' });
+    seed2.owners.find((o) => o.id === 'owner-043')!.user_id = null;
+    seed2.lot_owners.push({ lot_id: 'lot-043', owner_id: 'owner-043b', starts_on: '2019-06-01', ends_on: null });
+    seed2.claims.push({ id: 'claim-y', lot_id: 'lot-043', email: 'new.person@example.com', created_at: DEMO_NOW, status: 'pending' });
+    seed2.tasks.push({ id: 'task-claim-y', kind: 'claim_attach', lot_id: 'lot-043', title: 'Claim', summary: 'x', status: 'open', created_at: DEMO_NOW, due_at: null, ref_id: 'claim-y', resolved_by: null, resolved_at: null });
+    store(seed2);
+    const api2 = make('board');
+    await expect(api2.resolveTask('task-claim-y', 'approve')).rejects.toThrow(/several owners/);
+    await expect(api2.resolveTask('task-claim-y', 'approve', undefined, 'owner-044')).rejects.toThrow(/not a current owner/);
+    expect((await api2.listClaimRequests()).find((c) => c.id === 'claim-y')!.status).toBe('pending');
+    await api2.resolveTask('task-claim-y', 'approve', undefined, 'owner-043b');
+    const after2 = JSON.parse(window.localStorage.getItem(KEY)!) as ReturnType<typeof createSeed>;
+    expect(after2.owners.find((o) => o.id === 'owner-043b')!.user_id).toBe(PAT_USER);
+    expect(after2.owners.find((o) => o.id === 'owner-043')!.user_id).toBeNull();
   });
 });

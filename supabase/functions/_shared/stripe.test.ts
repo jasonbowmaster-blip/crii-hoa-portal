@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hmacSha256Hex, mapStripeEvent, verifyStripeSignature, constantTimeEqual, type StripeEvent } from './stripe.ts';
+import { applyResultStatus, COMPARE_BYTES, constantTimeEqual, disposition, hmacSha256Hex, mapStripeEvent, MAX_UNMATCHED_ATTEMPTS, verifyStripeSignature, type StripeEvent } from './stripe.ts';
 
 const secret = 'whsec_test_secret';
 const payload = '{"id":"evt_1"}';
@@ -38,6 +38,20 @@ describe('verifyStripeSignature', () => {
     expect(constantTimeEqual('abc', 'abc')).toBe(true);
     expect(constantTimeEqual('abc', 'abcd')).toBe(false);
     expect(constantTimeEqual('abc', 'abd')).toBe(false);
+  });
+  it('constantTimeEqual never treats zero padding as equality, and refuses over-long values', () => {
+    expect(constantTimeEqual('abc', 'abc\u0000')).toBe(false);
+    expect(constantTimeEqual('abc\u0000\u0000', 'abc')).toBe(false);
+    expect(constantTimeEqual('', '')).toBe(true);
+    expect(constantTimeEqual('', '\u0000')).toBe(false);
+    const sig = 'a'.repeat(64);
+    expect(constantTimeEqual(sig, sig)).toBe(true);
+    expect(constantTimeEqual(sig, `${sig}0`)).toBe(false);
+    const long = 'b'.repeat(COMPARE_BYTES + 50);
+    expect(constantTimeEqual(long, long)).toBe(false);
+    expect(constantTimeEqual('b'.repeat(COMPARE_BYTES), 'b'.repeat(COMPARE_BYTES))).toBe(true);
+    // a difference past the last byte of a short value, and one in the last compared byte
+    expect(constantTimeEqual('b'.repeat(COMPARE_BYTES), `${'b'.repeat(COMPARE_BYTES - 1)}c`)).toBe(false);
   });
 });
 
@@ -128,5 +142,29 @@ describe('mapStripeEvent', () => {
   });
   it('ignores unknown types', () => {
     expect(mapStripeEvent(ev('customer.created', { metadata: meta })).ignored_reason).toBe('event_type_not_used');
+  });
+});
+
+describe('webhook disposition', () => {
+  const changes = (e: StripeEvent) => mapStripeEvent(e);
+  it('applies a mapped event', () => {
+    expect(disposition(changes(ev('payment_intent.succeeded', { id: 'pi_1', amount: 100, metadata: meta })))).toBe('apply');
+  });
+  it('ignores event types we do not use and plain card declines, with a 200 and nothing kept', () => {
+    expect(disposition(changes(ev('customer.created', { id: 'cus_1' })))).toBe('ignore');
+    expect(disposition(changes(ev('payment_intent.payment_failed', { id: 'pi_2', amount: 100, payment_method_types: ['card'] })))).toBe('ignore');
+  });
+  it('quarantines an event that should have been usable but has no payment reference (never a silent 200)', () => {
+    expect(disposition(changes(ev('invoice.paid', { amount_paid: 1 })))).toBe('quarantine');
+    expect(disposition(changes(ev('charge.dispute.closed', { amount: 1, status: 'won' })))).toBe('quarantine');
+    expect(disposition(changes(ev('charge.refunded', { id: 'ch_1', payment_intent: 'pi_9', refunds: { data: [] } })))).toBe('quarantine');
+  });
+  it('asks Stripe to retry an unmatched event a few times, then leaves it quarantined with a 200', () => {
+    expect(applyResultStatus({ applied: true })).toBe(200);
+    expect(applyResultStatus({ applied: false, duplicate: true })).toBe(200);
+    expect(applyResultStatus({ applied: false, duplicate: false, quarantined: true, attempts: 1 })).toBe(500);
+    expect(applyResultStatus({ applied: false, duplicate: false, quarantined: true, attempts: MAX_UNMATCHED_ATTEMPTS - 1 })).toBe(500);
+    expect(applyResultStatus({ applied: false, duplicate: false, quarantined: true, attempts: MAX_UNMATCHED_ATTEMPTS })).toBe(200);
+    expect(applyResultStatus({ applied: false, duplicate: false })).toBe(500);   // not recorded: never a 200
   });
 });
