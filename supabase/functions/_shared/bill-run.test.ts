@@ -49,3 +49,19 @@ describe('liveKeyRefused', () => {
     expect(liveKeyRefused('sk_test_abc', undefined)).toBe(false);
   });
 });
+
+describe('credits and re-runs', () => {
+  it('a credit bigger than the dues gives a zero invoice, not a negative one', () => {
+    const run = buildBillRun(lots, owners, [{ lot_id: 'c', balance_cents: -25000 }], params);
+    const d = run.drafts.find((x) => x.lot_number === 100)!;
+    expect(d).toMatchObject({ total_cents: 0, credit_left_cents: 7000, carried_cents: -25000 });
+    expect(run.drafts.every((x) => x.total_cents >= 0)).toBe(true);
+  });
+  it('a re-run does not count its own posted charge as a carried balance', () => {
+    const first = buildBillRun(lots, owners, [], params);
+    // after the run posts 18000 per lot, lot_balances shows 18000 for each lot
+    const after = lots.map((l) => ({ lot_id: l.id, balance_cents: 18000 }));
+    const posted = lots.map((l) => ({ lot_id: l.id, balance_cents: 18000 }));
+    expect(buildBillRun(lots, owners, after, params, posted)).toEqual(first);
+  });
+});

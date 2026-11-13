@@ -1,6 +1,6 @@
 // Stripe webhook receiver. Verifies the signature, maps the event with the pure
-// logic in _shared/stripe.ts, then writes with the service role. Idempotent:
-// ledger rows are upserted on external_ref, tasks on ref_id.
+// logic in _shared/stripe.ts, then hands the result to the database function
+// apply_stripe_event (service role), which is idempotent by Stripe event id.
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { mapStripeEvent, verifyStripeSignature, type StripeEvent } from '../_shared/stripe.ts';
 
@@ -21,41 +21,18 @@ Deno.serve(async (req) => {
 
   const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
 
-  // Resolve Stripe invoice ids to our invoice ids.
-  const stripeIds = [...new Set(changes.ledger_inserts.map((l) => l.stripe_invoice_id).filter((x): x is string => !!x))];
-  const invoiceIds = new Map<string, string>();
-  if (stripeIds.length > 0) {
-    const { data, error } = await db.from('invoices').select('id, stripe_invoice_id').in('stripe_invoice_id', stripeIds);
-    if (error) return new Response('Lookup failed', { status: 500 });
-    for (const row of data ?? []) invoiceIds.set(row.stripe_invoice_id, row.id);
+  // One database call applies the whole event: finds the lot through our invoices, moves the
+  // payment's ledger row forward, updates the invoice, opens tasks, and records the event id
+  // so a duplicate delivery changes nothing.
+  const { data, error } = await db.rpc('apply_stripe_event', { p_event_id: event.id, p_changes: changes });
+  if (error) {
+    console.error(`stripe-webhook ${event.id} apply failed: ${error.message}`);
+    return new Response('Write failed', { status: 500 }); // Stripe retries; the call is idempotent
   }
-
-  const fail = (what: string, error: { message: string } | null) => {
-    console.error(`stripe-webhook ${event.id} ${what}: ${error?.message}`);
-    return new Response('Write failed', { status: 500 }); // Stripe retries; writes are idempotent
-  };
-
-  for (const l of changes.ledger_inserts) {
-    const { stripe_invoice_id, ...row } = l;
-    const { error } = await db.from('ledger_entries').upsert(
-      { ...row, invoice_id: stripe_invoice_id ? invoiceIds.get(stripe_invoice_id) ?? null : null },
-      { onConflict: 'external_ref', ignoreDuplicates: true },
-    );
-    if (error) return fail('ledger insert', error);
+  if (data?.applied === false && !data?.duplicate) {
+    // Usually an event that arrived before the invoice was linked. Ask Stripe to retry.
+    console.error(`stripe-webhook ${event.id} not applied: ${data?.reason}`);
+    return new Response('Not applied yet', { status: 500 });
   }
-  for (const u of changes.ledger_updates) {
-    const { error } = await db.from('ledger_entries').update({ status: u.status }).eq('external_ref', u.external_ref);
-    if (error) return fail('ledger update', error);
-  }
-  for (const i of changes.invoice_updates) {
-    const { error } = await db.from('invoices').update({ status: i.status }).eq('stripe_invoice_id', i.stripe_invoice_id);
-    if (error) return fail('invoice update', error);
-  }
-  for (const t of changes.tasks) {
-    const { data: existing } = await db.from('board_tasks').select('id').eq('ref_id', t.ref_id).eq('kind', t.kind).limit(1);
-    if (existing && existing.length > 0) continue;
-    const { error } = await db.from('board_tasks').insert({ ...t, status: 'open' });
-    if (error) return fail('task insert', error);
-  }
-  return Response.json({ received: true });
+  return Response.json({ received: true, duplicate: data?.duplicate === true });
 });

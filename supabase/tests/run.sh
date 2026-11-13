@@ -69,6 +69,10 @@ if [ "${1:-}" != "--no-mutations" ]; then
     "consent history not written|0003_access.sql|s/if v_old\.email_notice_consent is distinct from/if false and v_old.email_notice_consent is distinct from/"
     "owner writes not audited|0003_access.sql|s/if auth\.uid\(\) is null and/if true or auth.uid() is null and/"
     "roster link does not notify the board|0003_access.sql|s/where o\.id = any \(v_new\)/where false/"
+    "settle-update broken (settled payment never leaves processing)|0002_money.sql|s/where public\.ledger_status_rank\(excluded\.status\) > public\.ledger_status_rank\(public\.ledger_entries\.status\)/where false/"
+    "status can move backwards|0002_money.sql|s/where public\.ledger_status_rank\(excluded\.status\) > public\.ledger_status_rank\(public\.ledger_entries\.status\)//"
+    "duplicate event ids not recorded|0002_money.sql|s/if exists \(select 1 from public\.processed_events where id = p_event_id\) then/if false then/; s/on conflict \(id\) do nothing;\n  get diagnostics v_n = row_count;\n  if v_n = 0 then/on conflict (id) do nothing;\n  v_n := 1;\n  if v_n = 0 then/"
+    "check deposit leaves the invoice open|0002_money.sql|s/update public\.invoices set status = 'paid', paid_outside_stripe = true, paid_on = current_date where id = v_inv\.id;//"
   )
   i=0
   for m in "${mutations[@]}"; do
