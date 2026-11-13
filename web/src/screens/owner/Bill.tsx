@@ -11,6 +11,7 @@ import StatusPill from '../../components/StatusPill';
 import Amount from '../../components/Amount';
 import ContactFooter from '../../components/ContactFooter';
 import { longDate } from '../../components/dates';
+import { currentYear } from '../../lib/clock';
 
 function Row({ e }: { e: LedgerEntry }) {
   const pill = e.status === 'processing' ? 'processing' : e.status === 'returned' ? 'returned' : e.kind === 'payment' ? 'paid' : null;
@@ -33,7 +34,7 @@ export default function Bill() {
   const { session, loading: sessionLoading } = useSession();
   const { data, error, loading } = useAsync(() => getApi().getMyLedger());
   const entries = [...(data?.entries ?? [])].sort((a, b) => b.posted_on.localeCompare(a.posted_on) || b.id.localeCompare(a.id));
-  const year = entries[0]?.posted_on.slice(0, 4) ?? String(new Date().getFullYear());
+  const year = String(currentYear());
   const thisYear = entries.filter((e) => e.posted_on.startsWith(year));
   const earlier = entries.filter((e) => !e.posted_on.startsWith(year));
 

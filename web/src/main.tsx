@@ -11,8 +11,8 @@ import { setAppNow } from './lib/clock';
 
 async function boot() {
   if (config.dataMode === 'supabase') {
-    const { createSupabaseApi } = await import('./data/supabase/adapter');
-    setApi(createSupabaseApi(config.supabaseUrl, config.supabaseAnonKey));
+    const { createReadySupabaseApi } = await import('./data/supabase/adapter');
+    setApi(await createReadySupabaseApi(config.supabaseUrl, config.supabaseAnonKey));
   } else {
     setAppNow(DEMO_NOW);
     setApi(createDemoApi());

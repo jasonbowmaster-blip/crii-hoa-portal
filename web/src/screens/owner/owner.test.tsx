@@ -6,8 +6,9 @@ import Home from './Home';
 import Bill from './Bill';
 import Message from './Message';
 import Settings from './Settings';
+import { setAppNow } from '../../lib/clock';
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); setAppNow(null); });
 
 describe('SignIn', () => {
   it('signs in with Google, refreshes the session and goes home', async () => {
@@ -59,6 +60,7 @@ describe('Bill', () => {
       entry({ id: 'a', description: 'Bank payment', kind: 'payment', amount_cents: -45000, status: 'processing', detail: 'Ending 0000' }),
       entry({ id: 'b', description: '2027 annual assessment', amount_cents: 45000, posted_on: '2027-01-01' }),
     ];
+    setAppNow('2027-03-01T15:00:00Z');
     renderAt(<Bill />, '/bill', fakeApi({ getMyLedger: async () => ({ entries, invoices: [] }) }));
     expect(await screen.findByText('Bank payment')).toBeTruthy();
     expect(screen.getAllByText('Processing').length).toBeGreaterThan(0);

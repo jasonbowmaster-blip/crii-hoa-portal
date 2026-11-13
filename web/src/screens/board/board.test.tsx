@@ -49,7 +49,7 @@ describe('BoardInbox', () => {
     installFakeApi({
       listInbox: async () => [msg], listLots: async () => LOT_ROWS,
       listTemplates: async () => [
-        { id: 'a', name: 'Meeting times', body: '', version: 1, approved_on: '2027-01-01' },
+        { id: 'a', name: 'Meeting times', body: 'Thank you for asking.', version: 1, approved_on: '2027-01-01' },
         { id: 'b', name: 'Unapproved draft', body: '', version: 1, approved_on: null },
       ],
       replyWithTemplate,
@@ -60,6 +60,11 @@ describe('BoardInbox', () => {
     expect(screen.queryByRole('option', { name: 'Unapproved draft' })).toBeNull();
     expect(screen.getByText(/business days? left/)).toBeTruthy();
     fireEvent.change(select, { target: { value: 'a' } });
+    // choosing a template only previews it: nothing is sent until the board member confirms
+    expect(replyWithTemplate).not.toHaveBeenCalled();
+    expect(screen.getByText('Thank you for asking.')).toBeTruthy();
+    expect(screen.getByText(/nothing is delivered to anyone/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, send this reply' }));
     await waitFor(() => expect(replyWithTemplate).toHaveBeenCalledWith('m1', 'a'));
     expect(await screen.findByText(/Reply sent by you/)).toBeTruthy();
   });

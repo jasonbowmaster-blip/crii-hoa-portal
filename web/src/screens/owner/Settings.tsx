@@ -42,7 +42,7 @@ export default function Settings() {
           <input type="checkbox" checked={notice} onChange={(e) => { setNotice(e.target.checked); setSaved(false); }} style={{ width: 24, height: 24, flexShrink: 0 }} />
           <span>
             <strong>Email me official notices</strong><br />
-            <span className="sub">Budgets, annual meeting notices, rule changes and other notices the law requires. We record the date you agreed. Until you opt in, official notices keep coming on paper by mail.</span>
+            <span className="sub">Budgets, annual meeting notices, rule changes and other notices the law requires. We record the date you agreed. Until you opt in, official notices and bills keep coming on paper by mail.</span>
           </span>
         </label>
         <label style={{ display: 'flex', gap: 12, alignItems: 'flex-start', minHeight: 44 }}>
@@ -62,7 +62,7 @@ export default function Settings() {
         <section className="card">
           <h2 className="row__title">Where we send paper</h2>
           <p className="sub">{owner.mailing_address}</p>
-          <p className="notice">Need to change it? Message the board. Bills come on paper and, if we have your email, by email too.</p>
+          <p className="notice">Need to change it? Message the board. Bills come on paper by mail unless you choose “Email me official notices” above. Only then do they come by email instead.</p>
         </section>
       )}
       <button type="button" className="btn btn--block" onClick={signOut}>Sign out</button>

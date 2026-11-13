@@ -12,9 +12,11 @@ export default function BoardLots() {
   const [error, setError] = useState('');
 
   useEffect(() => {
+    let live = true;   // ignore a slow answer to an older search
     getApi().listLots(query.trim() || undefined)
-      .then((r) => { setRows(r); setError(''); })
-      .catch((e) => setError(errorText(e)));
+      .then((r) => { if (live) { setRows(r); setError(''); } })
+      .catch((e) => { if (live) setError(errorText(e)); });
+    return () => { live = false; };
   }, [query]);
 
   return (
@@ -25,19 +27,19 @@ export default function BoardLots() {
       </label>
       {error && <p className="error" role="alert">{error}</p>}
       <p className="sub" aria-live="polite">{rows ? `${rows.length} lot${rows.length === 1 ? '' : 's'}` : 'Loading…'}</p>
-      <div className="card table-scroll">
-        <table className="data">
+      <div className="card table-scroll lots-card">
+        <table className="data data--stack">
           <thead><tr><th>Lot</th><th>Address</th><th>Owners</th><th>Balance</th><th>State</th></tr></thead>
           <tbody>
             {rows?.map((r) => (
               <tr key={r.lot.id}>
-                <td>{r.lot.lot_number}</td>
-                <td>{r.lot.street_address}</td>
-                <td>{r.owners.map((o) => (
+                <td data-label="Lot" className="cell-lot">{r.lot.lot_number}</td>
+                <td data-label="Address" className="cell-address">{r.lot.street_address}</td>
+                <td data-label="Owners" className="cell-owners">{r.owners.map((o) => (
                   <div key={o.id}>{o.full_name}{o.email ? <span className="row__meta"> · {o.email}</span> : null}</div>
                 ))}</td>
-                <td>{formatCents(r.balance_cents)}</td>
-                <td><span className={`pill pill--${r.state === 'credit' ? 'paid' : r.state}`}>{STATE_LABEL[r.state]}</span></td>
+                <td data-label="Balance">{formatCents(r.balance_cents)}</td>
+                <td data-label="State"><span className={`pill pill--${r.state === 'credit' ? 'paid' : r.state}`}>{STATE_LABEL[r.state]}</span></td>
               </tr>
             ))}
           </tbody>

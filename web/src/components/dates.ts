@@ -21,3 +21,13 @@ export const greeting = (now = appNow()) => {
   const h = Number(now.toLocaleTimeString('en-US', { hour: 'numeric', hour12: false, timeZone }));
   return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
 };
+// "Saturday, May 15, 2027": the whole date in words, for screen readers and anywhere the short form is too terse.
+export const fullDate = (iso: string) =>
+  parts(iso).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone });
+const isMidnight = (iso: string) =>
+  parts(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone }).replace('24', '00') === '00:00';
+// Deadlines and midnight-stamped dates are all-day: "Sat · all day", never "Sat 12:00 AM".
+export const eventWhen = (iso: string, kind?: string) => {
+  if (kind !== 'dues_date' && !isMidnight(iso)) return weekdayTime(iso);
+  return `${parts(iso).toLocaleDateString('en-US', { weekday: 'short', timeZone })} · all day`;
+};

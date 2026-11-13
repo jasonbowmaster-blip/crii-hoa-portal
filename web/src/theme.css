@@ -99,3 +99,18 @@ table.data { width: 100%; border-collapse: collapse; font-size: 14px; }
 table.data th, table.data td { text-align: left; padding: 8px 10px; border-top: 1px solid var(--divider); }
 table.data th { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
 .table-scroll { overflow-x: auto; }
+
+/* Content never sits behind the fixed tab bar: bar height plus the phone's bottom safe area plus breathing room. */
+:root { --tabbar-h: 64px; }
+.tabbar { height: calc(var(--tabbar-h) + env(safe-area-inset-bottom)); }
+.page--tabbed { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 24px); }
+/* A pill beside a multi-line row title keeps its own height instead of stretching into an oval. */
+.row > .pill { align-self: center; }
+.row__end .pill { align-self: flex-end; }
+.msg-detail summary { cursor: pointer; list-style: none; min-height: 44px; align-items: center; border-top: 0; }
+.msg-detail summary::-webkit-details-marker { display: none; }
+.msg-detail__body { display: flex; flex-direction: column; gap: 8px; padding: 0 0 14px; font-size: 16px; }
+.body16 { font-size: 16px; line-height: 1.5; color: var(--text-2); margin: 0; }
+.msg-detail__body p { font-size: 16px; line-height: 1.5; color: var(--text-2); margin: 0; }
+.msg-detail__body p.row__meta { font-size: 14px; color: var(--muted); }
+ul.card > li:first-child { border-top: 0 !important; }

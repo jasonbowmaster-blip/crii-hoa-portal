@@ -307,6 +307,11 @@ export function createDemoApi(opts: DemoOptions = {}): PortalApi {
       return clone(state.events.filter((e) => signedIn() || e.is_public).sort((a, b) => a.starts_at.localeCompare(b.starts_at)));
     },
 
+    async listPublicEvents() {
+      await wait();
+      return clone(state.events.filter((e) => e.is_public).sort((a, b) => a.starts_at.localeCompare(b.starts_at)));
+    },
+
     async sendMessage(input: { topic: MessageTopic; body: string }) {
       await wait(); requireSignedIn();
       const body = input.body.trim();
@@ -348,7 +353,8 @@ export function createDemoApi(opts: DemoOptions = {}): PortalApi {
       await wait(); requireBoard();
       const weekAgo = new Date(new Date(nowISO()).getTime() - 7 * 86400000).toISOString();
       const week = state.messages.filter((m) => m.created_at >= weekAgo);
-      const waiting = week.filter((m) => m.status !== 'answered' && m.status !== 'closed');
+      // "Waiting" is every unresolved message, however old; received and answered are this week only.
+      const waiting = state.messages.filter((m) => m.status !== 'answered' && m.status !== 'closed');
       const oldest = waiting.reduce((mx, m) => Math.max(mx, businessDaysBetween(m.created_at, nowISO())), 0);
       const paid = state.lots.filter((l) => { const s = balanceOf(l.id).state; return s === 'paid' || s === 'credit'; }).length;
       return clone({
@@ -387,7 +393,7 @@ export function createDemoApi(opts: DemoOptions = {}): PortalApi {
         if (claim) claim.status = 'rejected';
       } else {
         const m = state.messages.find((x) => x.id === task.ref_id);
-        if (task.kind === 'template_reply' && m) useTemplate(m.id, 'tpl-meeting');
+        if (task.kind === 'template_reply' && m) useTemplate(m.id, task.template_id ?? 'tpl-meeting');
         else if ((task.kind === 'draft_approval' || task.kind === 'records_request') && m) markAnswered(m);
         if (task.kind === 'claim_attach') {
           const claim = state.claims.find((c) => c.id === task.ref_id);

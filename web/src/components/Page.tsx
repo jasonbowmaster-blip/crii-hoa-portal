@@ -7,7 +7,7 @@ export default function Page({ title, sub, loading, error, children }: {
 }) {
   return (
     <>
-      <main className="page">
+      <main className="page page--tabbed">
         <h1 className="title">{title}</h1>
         {sub && <p className="sub">{sub}</p>}
         {loading && <p className="sub" aria-busy="true">Loading…</p>}
