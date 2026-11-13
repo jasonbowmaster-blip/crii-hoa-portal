@@ -26,20 +26,22 @@ export interface PortalApi {
   listDocuments(): Promise<DocumentItem[]>;        // filtered by audience server-side
   openDocument(id: string): Promise<string>;       // short-lived signed URL
   listEvents(): Promise<HoaEvent[]>;
-  sendMessage(input: { topic: MessageTopic; body: string }): Promise<Message>;
+  listPublicEvents(): Promise<HoaEvent[]>;        // works signed out; only events marked public, public fields only
+  sendMessage(input: { topic: MessageTopic; body: string; lotId?: string }): Promise<Message>; // lotId: one of my lots (owners of several); default is the first
   listMyMessages(): Promise<Message[]>;
   updateNoticePrefs(input: { email_notice_consent: boolean; board_notice_request: boolean }): Promise<Owner>;
 
   // --- Board (every call is refused server-side for non-board users) ---
   getBoardDashboard(): Promise<BoardDashboard>;
   listTasks(): Promise<BoardTask[]>;
-  resolveTask(id: string, action: 'approve' | 'reject' | 'dismiss', note?: string): Promise<BoardTask>;
+  resolveTask(id: string, action: 'approve' | 'reject' | 'dismiss', note?: string, ownerId?: string): Promise<BoardTask>; // ownerId: for a claim on a lot with several owners, which roster owner the sign-in belongs to
   listLots(query?: string): Promise<LotRow[]>;
   listInbox(filter?: { status?: Message['status']; topic?: MessageTopic }): Promise<Message[]>;
   listTemplates(): Promise<ReplyTemplate[]>;
   replyWithTemplate(messageId: string, templateId: string): Promise<Message>;
   logCheck(input: { lot_id: string; check_number: string; amount_cents: number; received_on: string }): Promise<CheckRecord>;
   confirmCheckDeposit(checkId: string, outcome: 'deposited' | 'returned'): Promise<CheckRecord>; // refused if same person who logged it
+  markCheckReturned(checkId: string, note?: string): Promise<CheckRecord>; // a DEPOSITED check the bank sent back: reopens the invoice, opens a task
   previewBillRun(input: { year: number; amount_cents: number; due_on: string }): Promise<BillRunPreview>;
   postAnnouncement(input: { title: string; body: string; audience: Audience }): Promise<Announcement>;
   addDocument(input: { folder: DocumentFolder; title: string; audience: Audience; file: File | null; is_draft: boolean }): Promise<DocumentItem>;

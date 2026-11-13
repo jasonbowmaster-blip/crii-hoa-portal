@@ -1,0 +1,225 @@
+// Whole payment lifecycles: events go through mapStripeEvent, then the in-memory twin of
+// apply_stripe_event, and the lot's balance is read with the web app's summarizeBalance.
+import { describe, expect, it } from 'vitest';
+import { summarizeBalance } from '../../../web/src/lib/ledger';
+import type { Invoice, LedgerEntry } from '../../../web/src/data/types';
+import { applySim, newSimDb, type SimDb } from './ledger-sim.ts';
+import { mapStripeEvent, type StripeEvent } from './stripe.ts';
+
+const LOT = 'lot-42';
+let n = 0;
+const ev = (type: string, object: Record<string, any>, id = `evt_${++n}`): StripeEvent => ({ id, type, created: 1_800_000_000 + n, data: { object } });
+const ACH = ['us_bank_account'];
+
+function start(): SimDb {
+  // The lot owes its 2027 assessment: one charge, one open invoice already linked to Stripe.
+  const db = newSimDb([{ id: 'inv-1', lot_id: LOT, number: '2027-042', amount_cents: 17500, status: 'open',
+    stripe_invoice_id: 'in_1', stripe_payment_intent_id: null, paid_outside_stripe: false }]);
+  db.ledger.push({ lot_id: LOT, posted_on: '2027-01-29', kind: 'charge', description: '2027 annual assessment', detail: null,
+    amount_cents: 17500, status: 'cleared', method: null, invoice_id: 'inv-1', external_ref: 'inv:2027-042' });
+  return db;
+}
+const feed = (db: SimDb, ...events: StripeEvent[]) => events.forEach((e) => applySim(db, mapStripeEvent(e)));
+function balance(db: SimDb) {
+  const entries = db.ledger.map((r, i) => ({ ...r, id: String(i) })) as unknown as LedgerEntry[];
+  return summarizeBalance(entries, db.invoices as unknown as Invoice[]);
+}
+const paymentRows = (db: SimDb) => db.ledger.filter((r) => r.kind === 'payment');
+
+describe('payment lifecycles', () => {
+  it('ACH: processing then succeeded ends cleared, one row, balance 0, invoice paid', () => {
+    const db = start();
+    feed(db, ev('payment_intent.processing', { id: 'pi_1', amount: 17500, invoice: 'in_1', payment_method_types: ACH }));
+    expect(balance(db)).toMatchObject({ balance_cents: 17500, processing_cents: 17500, state: 'processing' });
+    feed(db, ev('invoice.paid', { id: 'in_1', amount_paid: 17500, payment_intent: 'pi_1' }),
+             ev('payment_intent.succeeded', { id: 'pi_1', amount_received: 17500, invoice: 'in_1', payment_method_types: ACH }));
+    expect(paymentRows(db)).toHaveLength(1);
+    expect(paymentRows(db)[0]).toMatchObject({ status: 'cleared', method: 'ach' });
+    expect(balance(db)).toMatchObject({ balance_cents: 0, processing_cents: 0, state: 'paid' });
+    expect(db.invoices[0].status).toBe('paid');
+  });
+
+  it('ACH: processing then failed is a return, the lot owes again and a task opens', () => {
+    const db = start();
+    feed(db, ev('payment_intent.processing', { id: 'pi_1', amount: 17500, invoice: 'in_1', payment_method_types: ACH }),
+             ev('payment_intent.payment_failed', { id: 'pi_1', amount: 17500, invoice: 'in_1', payment_method_types: ACH }));
+    expect(paymentRows(db)).toHaveLength(1);
+    expect(balance(db)).toMatchObject({ balance_cents: 17500, processing_cents: 0, state: 'unpaid' });
+    expect(db.invoices[0].status).toBe('open');
+    expect(db.tasks).toEqual([{ lot_id: LOT, kind: 'payment_returned' }]);
+  });
+
+  it('ACH settled, then disputed days later: the same row flips back to owing', () => {
+    const db = start();
+    feed(db, ev('payment_intent.processing', { id: 'pi_1', amount: 17500, invoice: 'in_1', payment_method_types: ACH }),
+             ev('payment_intent.succeeded', { id: 'pi_1', amount_received: 17500, invoice: 'in_1', payment_method_types: ACH }),
+             ev('charge.dispute.created', { id: 'dp_1', amount: 17500, payment_intent: 'pi_1' }));
+    expect(paymentRows(db)).toHaveLength(1);
+    expect(balance(db).balance_cents).toBe(17500);
+  });
+
+  it('card: paid, then disputed (no metadata on the dispute): owing again, invoice open, task opened', () => {
+    const db = start();
+    feed(db, ev('invoice.paid', { id: 'in_1', amount_paid: 17500, payment_intent: 'pi_9' }));
+    expect(balance(db)).toMatchObject({ balance_cents: 0, state: 'paid' });
+    feed(db, ev('charge.dispute.created', { id: 'dp_1', amount: 17500, payment_intent: 'pi_9' }));
+    expect(paymentRows(db)).toHaveLength(1);
+    expect(balance(db)).toMatchObject({ balance_cents: 17500, state: 'unpaid' });
+    expect(db.invoices[0].status).toBe('open');
+    expect(db.tasks).toHaveLength(1);
+  });
+
+  it('two partial refunds post $50 and $50, not $50 and $100', () => {
+    const db = start();
+    feed(db, ev('invoice.paid', { id: 'in_1', amount_paid: 17500, payment_intent: 'pi_9' }),
+             ev('refund.created', { id: 're_1', amount: 5000, payment_intent: 'pi_9', status: 'succeeded' }),
+             ev('refund.created', { id: 're_2', amount: 5000, payment_intent: 'pi_9', status: 'succeeded' }));
+    expect(db.ledger.filter((r) => r.kind === 'refund').map((r) => r.amount_cents)).toEqual([5000, 5000]);
+    expect(balance(db).balance_cents).toBe(10000);
+  });
+
+  it('refunds delivered through charge.refunded and refund.created together post once each', () => {
+    const db = start();
+    feed(db, ev('invoice.paid', { id: 'in_1', amount_paid: 17500, payment_intent: 'pi_9' }),
+             ev('refund.created', { id: 're_1', amount: 5000, payment_intent: 'pi_9', status: 'succeeded' }),
+             ev('charge.refunded', { payment_intent: 'pi_9', refunds: { data: [{ id: 're_1', amount: 5000 }, { id: 're_2', amount: 2500 }] } }));
+    expect(db.ledger.filter((r) => r.kind === 'refund')).toHaveLength(2);
+    expect(balance(db).balance_cents).toBe(7500);
+  });
+
+  it('duplicate delivery of every event changes nothing', () => {
+    const once = start();
+    const twice = start();
+    const events = [
+      ev('payment_intent.processing', { id: 'pi_1', amount: 17500, invoice: 'in_1', payment_method_types: ACH }, 'evt_a'),
+      ev('invoice.paid', { id: 'in_1', amount_paid: 17500, payment_intent: 'pi_1' }, 'evt_b'),
+      ev('refund.created', { id: 're_1', amount: 5000, payment_intent: 'pi_1', status: 'succeeded' }, 'evt_c'),
+    ];
+    feed(once, ...events);
+    feed(twice, ...events, ...events);
+    expect(twice.ledger).toEqual(once.ledger);
+    expect(twice.invoices).toEqual(once.invoices);
+    expect(balance(twice).balance_cents).toBe(5000);
+  });
+
+  it('out of order: a late processing event does not undo a settled payment', () => {
+    const db = start();
+    feed(db, ev('invoice.paid', { id: 'in_1', amount_paid: 17500, payment_intent: 'pi_1' }),
+             ev('payment_intent.processing', { id: 'pi_1', amount: 17500, invoice: 'in_1', payment_method_types: ACH }));
+    expect(paymentRows(db)[0].status).toBe('cleared');
+    expect(db.invoices[0].status).toBe('paid');
+    expect(balance(db).state).toBe('paid');
+  });
+
+  it('a late invoice.paid after a dispute does not reopen the money or mark the invoice paid', () => {
+    const db = start();
+    feed(db, ev('invoice.paid', { id: 'in_1', amount_paid: 17500, payment_intent: 'pi_9' }),
+             ev('charge.dispute.created', { amount: 17500, payment_intent: 'pi_9' }),
+             ev('invoice.paid', { id: 'in_1', amount_paid: 17500, payment_intent: 'pi_9' }));
+    expect(balance(db).balance_cents).toBe(17500);
+    expect(db.invoices[0].status).toBe('open');
+  });
+
+  it('an invoice paid by check does not post a second payment when Stripe says it is paid', () => {
+    const db = start();
+    db.invoices[0].status = 'paid'; db.invoices[0].paid_outside_stripe = true;
+    db.ledger.push({ lot_id: LOT, posted_on: '2027-03-12', kind: 'payment', description: 'Payment by check', detail: null,
+      amount_cents: -17500, status: 'cleared', method: 'check', invoice_id: 'inv-1', external_ref: 'check:1' });
+    feed(db, ev('invoice.paid', { id: 'in_1', amount_paid: 17500, payment_intent: null }));
+    expect(paymentRows(db)).toHaveLength(1);
+    expect(balance(db).balance_cents).toBe(0);
+  });
+
+  describe('disputes', () => {
+    const paidByCard = (db: SimDb) => feed(db, ev('invoice.paid', { id: 'in_1', amount_paid: 17500, payment_intent: 'pi_1' }),
+      ev('charge.dispute.created', { amount: 17500, payment_intent: 'pi_1' }));
+    it('a lost dispute stays returned', () => {
+      const db = start(); paidByCard(db);
+      feed(db, ev('charge.dispute.closed', { amount: 17500, payment_intent: 'pi_1', status: 'lost' }));
+      expect(paymentRows(db)[0].status).toBe('returned');
+      expect(balance(db)).toMatchObject({ balance_cents: 17500, state: 'unpaid' });
+      expect(db.invoices[0].status).toBe('open');
+    });
+    it('a won dispute clears the payment again, once, and a replay or a second closed event changes nothing', () => {
+      const db = start(); paidByCard(db);
+      expect(balance(db).balance_cents).toBe(17500);
+      const won = ev('charge.dispute.closed', { amount: 17500, payment_intent: 'pi_1', status: 'won' }, 'evt_won');
+      expect(applySim(db, mapStripeEvent(won))).toEqual({ applied: true });
+      expect(paymentRows(db)).toHaveLength(1);
+      expect(paymentRows(db)[0]).toMatchObject({ status: 'cleared', description: 'Payment received' });
+      expect(balance(db)).toMatchObject({ balance_cents: 0, state: 'paid' });
+      expect(db.invoices[0].status).toBe('paid');
+      expect(applySim(db, mapStripeEvent(won))).toMatchObject({ applied: false, duplicate: true });
+      feed(db, ev('charge.dispute.closed', { amount: 17500, payment_intent: 'pi_1', status: 'won' }));
+      expect(balance(db)).toMatchObject({ balance_cents: 0, state: 'paid' });
+      expect(db.tasks).toHaveLength(1);    // only the one from the dispute opening
+    });
+    it('a won dispute with no disputed payment does not mark the invoice paid', () => {
+      const db = start();
+      feed(db, ev('charge.dispute.closed', { amount: 17500, payment_intent: 'pi_1', status: 'won', invoice: 'in_1' }));
+      expect(db.invoices[0].status).toBe('open');
+      expect(balance(db).balance_cents).toBe(17500);
+    });
+    it('a bank-returned payment is not revived by a dispute event', () => {
+      const db = start();
+      feed(db, ev('payment_intent.payment_failed', { id: 'pi_1', amount: 17500, invoice: 'in_1', payment_method_types: ACH }),
+        ev('charge.dispute.closed', { amount: 17500, payment_intent: 'pi_1', status: 'won' }));
+      expect(paymentRows(db)[0].status).toBe('returned');
+    });
+  });
+
+  describe('invoice.voided', () => {
+    it('an unpaid voided bill no longer shows as owed; one credit keyed by the void event; replay adds nothing', () => {
+      const db = start();
+      const v = ev('invoice.voided', { id: 'in_1' }, 'evt_void');
+      expect(balance(db).balance_cents).toBe(17500);
+      applySim(db, mapStripeEvent(v));
+      expect(db.invoices[0].status).toBe('void');
+      expect(balance(db)).toMatchObject({ balance_cents: 0 });
+      const credits = db.ledger.filter((r) => r.kind === 'credit');
+      expect(credits).toHaveLength(1);
+      expect(credits[0]).toMatchObject({ external_ref: 'void:evt_void', amount_cents: -17500, invoice_id: 'inv-1' });
+      expect(applySim(db, mapStripeEvent(v))).toMatchObject({ applied: false, duplicate: true });
+      feed(db, ev('invoice.voided', { id: 'in_1' }, 'evt_void_again'));
+      expect(db.ledger.filter((r) => r.kind === 'credit')).toHaveLength(1);
+      expect(balance(db).balance_cents).toBe(0);
+    });
+    it('a paid invoice is not reversed, only recorded', () => {
+      const db = start();
+      feed(db, ev('invoice.paid', { id: 'in_1', amount_paid: 17500, payment_intent: 'pi_1' }));
+      expect(balance(db).balance_cents).toBe(0);
+      feed(db, ev('invoice.voided', { id: 'in_1' }, 'evt_void_paid'));
+      expect(db.ledger.filter((r) => r.kind === 'credit')).toEqual([]);
+      expect(db.processed.has('evt_void_paid')).toBe(true);
+    });
+    it('the paid STATUS alone stops the reversal (even with an unpaid-looking charge behind it)', () => {
+      const db = start();
+      db.invoices[0].status = 'paid';
+      feed(db, ev('invoice.voided', { id: 'in_1' }, 'evt_void_paid2'));
+      expect(db.ledger.filter((r) => r.kind === 'credit')).toEqual([]);
+      expect(balance(db).balance_cents).toBe(17500);
+    });
+    it('a bill already covered by a cleared payment gets no credit (never a positive credit)', () => {
+      const db = start();
+      db.ledger.push({ lot_id: LOT, posted_on: '2027-02-01', kind: 'payment', description: 'Check', detail: null, amount_cents: -17500,
+        status: 'cleared', method: 'check', invoice_id: 'inv-1', external_ref: 'check:2' });
+      feed(db, ev('invoice.voided', { id: 'in_1' }, 'evt_void_cov'));
+      expect(db.ledger.filter((r) => r.kind === 'credit')).toEqual([]);
+    });
+    it('a partly paid bill gets a credit only for what is still unpaid', () => {
+      const db = start();
+      db.ledger.push({ lot_id: LOT, posted_on: '2027-02-01', kind: 'payment', description: 'Check', detail: null, amount_cents: -5000,
+        status: 'cleared', method: 'check', invoice_id: 'inv-1', external_ref: 'check:1' });
+      feed(db, ev('invoice.voided', { id: 'in_1' }, 'evt_void_part'));
+      expect(db.ledger.find((r) => r.kind === 'credit')).toMatchObject({ amount_cents: -12500 });
+      expect(balance(db).balance_cents).toBe(0);
+    });
+  });
+
+  it('an event for a payment we cannot place yet is not recorded, so the retry can apply it', () => {
+    const db = start();
+    const first = applySim(db, mapStripeEvent(ev('charge.dispute.created', { amount: 1, payment_intent: 'pi_unknown' }, 'evt_x')));
+    expect(first).toMatchObject({ applied: false, reason: 'lot_not_found' });
+    expect(db.processed.has('evt_x')).toBe(false);
+  });
+});

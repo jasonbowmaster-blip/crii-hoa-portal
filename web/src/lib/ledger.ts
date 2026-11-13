@@ -58,3 +58,16 @@ export function businessDaysBetween(fromISO: string, toISO: string, holidays: st
   }
   return n;
 }
+
+// Signed business days from now to a deadline: positive = days left, negative = days late, 0 = due today.
+export function businessDaysUntil(nowISO: string, dueISO: string, holidays: string[] = []): number {
+  if (new Date(dueISO) >= new Date(nowISO)) return businessDaysBetween(nowISO, dueISO, holidays);
+  return -businessDaysBetween(dueISO, nowISO, holidays);
+}
+
+// "3 business days left", "1 business day late", "due today".
+export function deadlineText(days: number): string {
+  if (days === 0) return 'due today';
+  const n = Math.abs(days);
+  return `${n} business day${n === 1 ? '' : 's'} ${days > 0 ? 'left' : 'late'}`;
+}

@@ -1,0 +1,40 @@
+# Linux only (Ubuntu 24.04, pinned: ubuntu-latest moved to 26.04, which has no postgresql-16 package). No secrets are used or needed: every check runs on sample data.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      # Actions are pinned to full commit SHAs (tags can move). v4.4.0 of each.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: npm run check:secrets
+
+      # The database harness (supabase/tests/run.sh) starts a throwaway Postgres 16 from
+      # /usr/lib/postgresql/16/bin on a private port and socket, applies every migration and
+      # the seed, runs the SQL suites, then mutation-checks the guards. Ubuntu 24.04
+      # ships postgresql-16 in its own repositories, so no extra apt source is needed. The
+      # package also starts a default cluster on 5432; the harness never touches it.
+      - name: Install PostgreSQL 16
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-16
+      - name: Database tests and mutation checks
+        run: npm run test:db
