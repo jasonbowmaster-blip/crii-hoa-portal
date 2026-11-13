@@ -20,13 +20,13 @@
 /* Lots table: on a phone each lot is a stacked card, so Balance and State are never pushed off-screen. */
 @media (max-width: 640px) {
   .lots-card { padding: 0 12px; }
-  table.data--stack, table.data--stack tbody, table.data--stack tr, table.data--stack td { display: block; width: 100%; }
-  table.data--stack thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
-  table.data--stack tr { padding: 12px 0; border-top: 1px solid var(--divider); }
-  table.data--stack tr:first-child { border-top: 0; }
-  table.data--stack td { border: 0; padding: 3px 0; font-size: 16px; overflow-wrap: anywhere; }
-  table.data--stack td::before { content: attr(data-label) ': '; font-size: 13px; font-weight: 600; color: var(--muted); }
-  table.data--stack td.cell-lot::before, table.data--stack td.cell-address::before { content: none; }
-  table.data--stack td.cell-lot { font-weight: 700; padding-bottom: 0; }
-  table.data--stack td.cell-address { font-weight: 600; }
+  table.data.data--stack, table.data.data--stack tbody, table.data.data--stack tr, table.data.data--stack td { display: block; width: 100%; }
+  table.data.data--stack thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+  table.data.data--stack tr { padding: 12px 0; border-top: 1px solid var(--divider); }
+  table.data.data--stack tr:first-child { border-top: 0; }
+  table.data.data--stack td { border: 0; padding: 3px 0; font-size: 16px; overflow-wrap: anywhere; }
+  table.data.data--stack td::before { content: attr(data-label) ': '; font-size: 13px; font-weight: 600; color: var(--muted); }
+  table.data.data--stack td.cell-lot::before, table.data.data--stack td.cell-address::before { content: none; }
+  table.data.data--stack td.cell-lot { font-weight: 700; padding-bottom: 0; }
+  table.data.data--stack td.cell-address { font-weight: 600; }
 }
