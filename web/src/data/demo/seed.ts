@@ -8,7 +8,8 @@ import type {
   Invoice, LedgerEntry, Lot, LotOwner, Message, Owner, ReplyTemplate,
 } from '../types';
 
-export type Persona = 'owner' | 'board' | 'signed_out';
+// 'unlinked' = signed in, but the sign-in does not match any home yet (the claim-code case)
+export type Persona = 'owner' | 'board' | 'signed_out' | 'unlinked';
 
 export const DEMO_NOW = '2027-01-13T15:00:00Z'; // a Wednesday
 export const PAT_USER = 'user-pat';

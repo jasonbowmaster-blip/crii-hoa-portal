@@ -6,6 +6,7 @@ import { summarizeBalance } from '../../lib/ledger';
 import type { LedgerEntry } from '../../data/types';
 import Page from '../../components/Page';
 import BalanceCard from '../../components/BalanceCard';
+import NotLinked, { isLinked } from '../../components/NotLinked';
 import StatusPill from '../../components/StatusPill';
 import Amount from '../../components/Amount';
 import ContactFooter from '../../components/ContactFooter';
@@ -29,7 +30,7 @@ function Row({ e }: { e: LedgerEntry }) {
 }
 
 export default function Bill() {
-  const { session } = useSession();
+  const { session, loading: sessionLoading } = useSession();
   const { data, error, loading } = useAsync(() => getApi().getMyLedger());
   const entries = [...(data?.entries ?? [])].sort((a, b) => b.posted_on.localeCompare(a.posted_on) || b.id.localeCompare(a.id));
   const year = entries[0]?.posted_on.slice(0, 4) ?? String(new Date().getFullYear());
@@ -37,8 +38,9 @@ export default function Bill() {
   const earlier = entries.filter((e) => !e.posted_on.startsWith(year));
 
   return (
-    <Page title="My bill" sub={session?.lot ? `Lot ${session.lot.lot_number} · ${session.lot.street_address}` : undefined} loading={loading} error={error}>
-      {data && (
+    <Page title="My bill" sub={session?.lot ? `Lot ${session.lot.lot_number} · ${session.lot.street_address}` : undefined} loading={loading || sessionLoading} error={error}>
+      {data && !isLinked(session) && (<><NotLinked /><ContactFooter /></>)}
+      {data && isLinked(session) && (
         <>
           <BalanceCard balance={summarizeBalance(data.entries, data.invoices)} />
           <p className="notice">A payment that is still processing counts once it clears.</p>

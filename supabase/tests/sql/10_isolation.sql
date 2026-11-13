@@ -35,7 +35,7 @@ select tests.fails('select 1 from public.claim_attempts', 'permission denied', '
 
 -- documents by audience
 select tests.eq(tests.count($$select 1 from public.documents where audience = 'board'$$), 0::bigint, 'owner cannot read board-only documents');
-select tests.eq(tests.count($$select 1 from public.documents where is_draft$$), 0::bigint, 'owner cannot read draft documents');
+select tests.ok(tests.count($$select 1 from public.documents where is_draft and audience = 'owners'$$) > 0, 'owner reads draft owner documents (draft minutes must be available)');
 select tests.ok(tests.count($$select 1 from public.documents where audience = 'owners'$$) > 0, 'owner reads owner documents');
 select tests.eq(tests.count($$select 1 from public.announcements where audience = 'board'$$), 0::bigint, 'owner cannot read board announcements');
 select tests.eq(tests.count($$select 1 from public.events where not is_public$$), 1::bigint, 'owner reads owner-only event');

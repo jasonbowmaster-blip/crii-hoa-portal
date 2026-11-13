@@ -3,6 +3,7 @@ import { getApi } from '../../data/api';
 import { useAsync } from '../../components/useAsync';
 import Page from '../../components/Page';
 import BalanceCard from '../../components/BalanceCard';
+import NotLinked, { isLinked } from '../../components/NotLinked';
 import BoardLink from '../../components/BoardLink';
 import ContactFooter from '../../components/ContactFooter';
 import { config } from '../../config';
@@ -16,12 +17,16 @@ export default function Home() {
   const ago = ann ? daysAgo(ann.posted_at) : 0;
 
   return (
-    <Page title={data ? `${greeting()}, ${s?.owner?.first_name ?? 'neighbor'}` : config.hoaName} loading={loading} error={error}>
+    <Page title={data ? `${greeting()}, ${s?.owner?.first_name || 'neighbor'}` : config.hoaName} loading={loading} error={error}>
       {data && s && (
         <>
           {s.lot && <p className="sub">Lot {s.lot.lot_number} · {s.lot.street_address}</p>}
-          <BalanceCard balance={data.balance} />
-          <Link to="/bill">See my bill and payment history</Link>
+          {isLinked(s) ? (
+            <>
+              <BalanceCard balance={data.balance} />
+              <Link to="/bill">See my bill and payment history</Link>
+            </>
+          ) : <NotLinked />}
           {ev && (
             <Link to="/calendar" className="card" style={{ flexDirection: 'row', textDecoration: 'none', color: 'inherit' }}>
               <div aria-hidden="true"><strong>{monthAbbr(ev.starts_at)}</strong><br />{dayNum(ev.starts_at)}</div>

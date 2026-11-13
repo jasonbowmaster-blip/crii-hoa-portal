@@ -64,6 +64,9 @@ select ('b0000000-0000-4000-8000-' || lpad(k::text, 12, '0'))::uuid,
        ('10000000-0000-4000-8000-' || lpad(lot::text, 12, '0'))::uuid, role, is_admin, date '2027-12-31', true
 from board_seed;
 
+-- Linking the nine board members above opened "new sign-in" tasks; they are not real events, so clear them.
+delete from public.board_tasks where kind = 'roster_change';
+
 -- 2027 invoices
 insert into public.invoices (id, lot_id, number, description, amount_cents, issued_on, due_on, status, paid_on)
 select ('20000000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid,

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
-import { entry, fakeApi, owner, renderAt, session } from './fakeApi';
+import { entry, fakeApi, owner, paidBalance, renderAt, session } from './fakeApi';
 import SignIn from './SignIn';
 import Home from './Home';
 import Bill from './Bill';
@@ -98,5 +98,27 @@ describe('Settings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save my choices' }));
     await waitFor(() => expect(updateNoticePrefs).toHaveBeenCalledWith({ email_notice_consent: true, board_notice_request: true }));
     expect(await screen.findByText('Saved. Thank you.')).toBeTruthy();
+  });
+});
+
+describe('not linked yet', () => {
+  const unlinked = { ...session, owner: null, lot: null };
+  const emptyHome = { session: unlinked, balance: paidBalance, next_event: null, announcements: [], new_documents: [] };
+
+  it('Home says the sign-in is not matched and never says paid up', async () => {
+    renderAt(<Home />, '/', fakeApi({ getSession: async () => unlinked, getOwnerHome: async () => emptyHome }));
+    expect(await screen.findByText('We couldn’t match this sign-in to a home yet')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Enter the code from your letter' }).getAttribute('href')).toBe('/claim');
+    expect(screen.getAllByRole('link').some((a) => (a.getAttribute('href') ?? '').startsWith('mailto:'))).toBe(true);
+    expect(screen.queryByText(/paid up/i)).toBeNull();
+    expect(screen.queryByText('Paid')).toBeNull();
+    expect(screen.queryByText('$0.00')).toBeNull();
+  });
+
+  it('My bill shows the same state, not an empty paid-up bill', async () => {
+    renderAt(<Bill />, '/bill', fakeApi({ getSession: async () => unlinked }));
+    expect(await screen.findByText('We couldn’t match this sign-in to a home yet')).toBeTruthy();
+    expect(screen.queryByText(/paid up/i)).toBeNull();
+    expect(screen.queryByText('Nothing on your bill yet.')).toBeNull();
   });
 });

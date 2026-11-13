@@ -81,7 +81,7 @@ function DocumentForm() {
           <option value="owners">Owners</option><option value="public">Public</option><option value="board">Board only</option>
         </select>
       </label>
-      <label className="board-check"><input type="checkbox" checked={draft} onChange={(e) => setDraft(e.target.checked)} /> This is a draft</label>
+      <label className="board-check"><input type="checkbox" checked={draft} onChange={(e) => setDraft(e.target.checked)} /> This is a draft (owners see it marked Draft; choose Board only to hide it)</label>
       <label className="field">File<input className="input" type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} /></label>
       <button type="submit" className="btn btn--primary">Add document</button>
       <Result r={r} />

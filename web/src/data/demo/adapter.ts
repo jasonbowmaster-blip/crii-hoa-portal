@@ -92,23 +92,44 @@ export function createDemoApi(opts: DemoOptions = {}): PortalApi {
   const isBoard = () => state.persona === 'board';
   const requireSignedIn = () => { if (!signedIn()) throw new Error('Please sign in first.'); };
   const requireBoard = () => { if (!isBoard()) throw new Error('This page is for board members only.'); };
-  const myLot = () => state.lots.find((l) => l.lot_number === PAT_LOT_NUMBER)!;
+  // Owner records and lots linked to this sign-in. Empty for the 'unlinked' persona.
+  const myOwners = (): Owner[] => (state.persona === 'unlinked' ? [] : state.owners.filter((o) => o.user_id === PAT_USER));
+  const myLots = () => {
+    const ids = new Set(myOwners().map((o) => o.id));
+    return state.lot_owners
+      .filter((lo) => ids.has(lo.owner_id) && !lo.ends_on)
+      .sort((a, b) => a.starts_on.localeCompare(b.starts_on) || a.lot_id.localeCompare(b.lot_id))
+      .map((lo) => state.lots.find((l) => l.id === lo.lot_id)!)
+      .filter(Boolean);
+  };
+  const myLotOrNull = () => myLots()[0] ?? null;
+  const myLot = () => {
+    const lot = myLotOrNull();
+    if (!lot) throw new Error('This sign-in is not linked to a home yet. Enter the code from your letter, or contact the board.');
+    return lot;
+  };
   const lotEntries = (lotId: string) => state.ledger.filter((e) => e.lot_id === lotId);
   const lotInvoices = (lotId: string) => state.invoices.filter((i) => i.lot_id === lotId);
   const balanceOf = (lotId: string): BalanceSummary => summarizeBalance(lotEntries(lotId), lotInvoices(lotId));
   const ownersOf = (lotId: string): Owner[] =>
     state.lot_owners.filter((lo) => lo.lot_id === lotId && !lo.ends_on)
       .map((lo) => state.owners.find((o) => o.id === lo.owner_id)!).filter(Boolean);
-  const me = () => state.owners.find((o) => o.user_id === PAT_USER)!;
+  const me = () => {
+    const o = myOwners()[0];
+    if (!o) throw new Error('This sign-in is not linked to a home yet. Enter the code from your letter, or contact the board.');
+    return o;
+  };
   const boardMember = () => state.board.find((b) => b.user_id === PAT_USER && b.active) ?? null;
   const canSee = (a: Audience) => a === 'public' || (a === 'owners' && signedIn()) || (a === 'board' && isBoard());
 
   function session(): Session | null {
     if (!signedIn()) return null;
-    const owner = me();
+    const owners = myOwners();
+    const lots = myLots();
     return {
-      user_id: PAT_USER, email: owner.email ?? 'pat.example@example.com',
-      owner: clone(owner), lot: clone(myLot()), board: isBoard() ? clone(boardMember()) : null,
+      user_id: PAT_USER, email: owners[0]?.email ?? 'pat.example@example.com',
+      owner: clone(owners[0] ?? null), lot: clone(lots[0] ?? null), owners: clone(owners), lots: clone(lots),
+      board: isBoard() ? clone(boardMember()) : null,
     };
   }
 
@@ -197,10 +218,10 @@ export function createDemoApi(opts: DemoOptions = {}): PortalApi {
       if (clean !== DEMO_CLAIM_CODE) return { ok: false, message: 'That code did not work. Check it and try again, or message the board.' };
       if (state.used_codes.includes(clean)) return { ok: false, message: 'That code has already been used. Message the board if you need a new one.' };
       state.used_codes.push(clean);
-      const lot = myLot();
+      const lot = state.lots.find((l) => l.lot_number === PAT_LOT_NUMBER)!;   // the sample letter is for Lot 42
       const claim: ClaimRequest = { id: newId('claim'), lot_id: lot.id, email: session()!.email, created_at: nowISO(), status: 'pending' };
       state.claims.push(claim);
-      addTask({ kind: 'claim_attach', lot_id: lot.id, title: `Confirm email for Lot ${lot.lot_number}`, summary: `${claim.email} used a claim code for Lot ${lot.lot_number}. Confirm it is the owner.`, due_at: null, ref_id: claim.id });
+      addTask({ kind: 'claim_attach', lot_id: lot.id, title: `Confirm email for Lot ${lot.lot_number}`, summary: `${claim.email} used a claim code for Lot ${lot.lot_number}. Verify ownership against the county land records, then approve or reject.`, due_at: null, ref_id: claim.id });
       save();
       return { ok: true, message: 'Thank you. The board will confirm your email for this lot, usually within a few days.' };
     },
@@ -209,17 +230,20 @@ export function createDemoApi(opts: DemoOptions = {}): PortalApi {
 
     async getOwnerHome(): Promise<OwnerHome> {
       await wait(); requireSignedIn();
-      const lot = myLot();
+      const lot = myLotOrNull();
       const next = state.events.filter((e) => e.starts_at >= nowISO()).sort((a, b) => a.starts_at.localeCompare(b.starts_at))[0] ?? null;
-      const docs = state.documents.filter((d) => canSee(d.audience) && !d.is_draft)
+      const docs = state.documents.filter((d) => canSee(d.audience))
         .sort((a, b) => b.posted_on.localeCompare(a.posted_on)).slice(0, 3);
       const anns = state.announcements.filter((a) => canSee(a.audience)).sort((a, b) => b.posted_at.localeCompare(a.posted_at));
-      return clone({ session: session()!, balance: balanceOf(lot.id), next_event: next, announcements: anns, new_documents: docs });
+      // No linked home: the balance below means nothing and the screens do not show it (they show "not linked yet").
+      const balance = lot ? balanceOf(lot.id) : summarizeBalance([], []);
+      return clone({ session: session()!, balance, next_event: next, announcements: anns, new_documents: docs });
     },
 
     async getMyLedger() {
       await wait(); requireSignedIn();
-      const lot = myLot();
+      const lot = myLotOrNull();
+      if (!lot) return { entries: [], invoices: [] };
       const entries = lotEntries(lot.id).sort((a, b) => b.posted_on.localeCompare(a.posted_on));
       const invoices = lotInvoices(lot.id).sort((a, b) => b.due_on.localeCompare(a.due_on));
       return clone({ entries, invoices });
@@ -282,7 +306,7 @@ export function createDemoApi(opts: DemoOptions = {}): PortalApi {
 
     async listMyMessages() {
       await wait(); requireSignedIn();
-      return clone(state.messages.filter((m) => m.lot_id === myLot().id).sort((a, b) => b.created_at.localeCompare(a.created_at)));
+      return clone(state.messages.filter((m) => myOwners().some((o) => o.id === m.owner_id)).sort((a, b) => b.created_at.localeCompare(a.created_at)));
     },
 
     async updateNoticePrefs(input) {

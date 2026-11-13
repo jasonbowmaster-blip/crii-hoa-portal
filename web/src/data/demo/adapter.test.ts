@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { addBusinessDays, businessDaysBetween } from '../../lib/ledger';
 import { DEMO_CLAIM_CODE, DEMO_NOW, createDemoApi, demoReset, demoSwitchPersona } from './adapter';
 import { FOLDER_LABELS } from '../types';
+import { PAT_USER, createSeed } from './seed';
 
-const make = (persona: 'owner' | 'board' | 'signed_out' = 'owner', extra = {}) =>
+const make = (persona: 'owner' | 'board' | 'signed_out' | 'unlinked' = 'owner', extra = {}) =>
   createDemoApi({ persona, latencyMs: 0, ...extra });
 
 beforeEach(() => { window.localStorage.clear(); });
@@ -239,5 +240,54 @@ describe('persistence and toolbar helpers', () => {
     expect(await api.getSession()).toBeNull(); // reset goes back to signed out
     demoSwitchPersona('board');
     expect((await api.listTasks()).find((t) => t.id === 'task-chk')!.status).toBe('open');
+  });
+});
+
+describe('access: unlinked sign-in, shared household, drafts', () => {
+  it('an unmatched sign-in has no owner or lot, an empty bill and no pay link', async () => {
+    const api = make('unlinked');
+    const s = (await api.getSession())!;
+    expect(s.owner).toBeNull();
+    expect(s.lot).toBeNull();
+    expect(await api.getMyLedger()).toEqual({ entries: [], invoices: [] });
+    await expect(api.sendMessage({ topic: 'question', body: 'hello' })).rejects.toThrow(/not linked/i);
+    expect(await api.listMyMessages()).toEqual([]);
+  });
+
+  it('one sign-in linked to two owner records and lots gets a session without error', async () => {
+    const seed = createSeed('owner');
+    const second = seed.owners.find((o) => o.id === 'owner-043')!;
+    second.user_id = PAT_USER;                       // the shared household email links a second owner record
+    const secondLot = seed.lot_owners.find((lo) => lo.owner_id === second.id)!.lot_id;
+    window.localStorage.setItem('hoa-portal-demo-v1', JSON.stringify(seed));
+    const api = make('owner');
+    const s = (await api.getSession())!;
+    expect(s.owners).toHaveLength(2);
+    expect(s.lots).toHaveLength(2);
+    expect(s.lot?.lot_number).toBe(42);              // the earliest link stays the primary lot
+    expect(s.lots!.map((l) => l.id)).toContain(secondLot);
+    expect((await api.getOwnerHome()).session.lots).toHaveLength(2);
+  });
+
+  it('owners see draft minutes marked as drafts; board-only documents stay hidden', async () => {
+    const owner = make('owner');
+    const docs = await owner.listDocuments();
+    expect(docs.some((d) => d.is_draft && d.folder === 'minutes')).toBe(true);
+    expect(docs.every((d) => d.audience !== 'board')).toBe(true);
+    expect((await owner.getOwnerHome()).new_documents.length).toBeGreaterThan(0);
+  });
+
+  it('claim approval asks the board to verify against county land records', async () => {
+    const owner = make('owner');
+    await owner.redeemClaimCode(DEMO_CLAIM_CODE);
+    const board = make('board');
+    const task = (await board.listTasks()).find((t) => t.kind === 'claim_attach')!;
+    expect(task.summary).toMatch(/county land records/);
+  });
+
+  it('dues paid counts paid and credit lots, the same rule as the database', async () => {
+    const dash = await make('board').getBoardDashboard();
+    const lots = await make('board').listLots();
+    expect(dash.lots_paid).toBe(lots.filter((l) => l.state === 'paid' || l.state === 'credit').length);
   });
 });

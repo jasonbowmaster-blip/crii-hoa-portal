@@ -6,7 +6,7 @@ import { demoReset, demoSwitchPersona } from './data/demo/adapter';
 export default function DemoToolbar() {
   const { session, refresh } = useSession();
   const nav = useNavigate();
-  const go = async (p: 'owner' | 'board' | 'signed_out', path: string) => {
+  const go = async (p: 'owner' | 'board' | 'signed_out' | 'unlinked', path: string) => {
     demoSwitchPersona(p);
     await refresh();
     nav(path);
@@ -19,6 +19,7 @@ export default function DemoToolbar() {
       <span style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
         <button type="button" className="btn btn--link" onClick={() => go('owner', '/')} aria-pressed={!!session && !isBoard}>View as owner</button>
         <button type="button" className="btn btn--link" onClick={() => go('board', '/board')} aria-pressed={isBoard}>View as board</button>
+        <button type="button" className="btn btn--link" onClick={() => go('unlinked', '/')}>View as an unmatched sign-in</button>
         <button type="button" className="btn btn--link" onClick={reset}>Start over</button>
       </span>
     </div>

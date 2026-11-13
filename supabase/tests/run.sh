@@ -24,10 +24,12 @@ as_pg "$PGBIN/initdb -D $DATA -U postgres --auth=trust >/dev/null" || { echo "in
 as_pg "$PGBIN/pg_ctl -D $DATA -l $WORK/log -w -o \"-c listen_addresses='' -c unix_socket_directories=$WORK -p $PORT -c fsync=off\" start >/dev/null" \
   || { echo "server start failed"; cat "$WORK/log"; exit 1; }
 
-# build_db <name> <migration file>: fresh database with stand-ins, migration, seed, helpers
+# build_db <name> <migrations dir>: fresh database with stand-ins, every migration in order, seed, helpers
 build_db() {
+  local args=() m
+  for m in "$2"/*.sql; do args+=(-f "$m"); done
   $PSQL -d postgres -c "create database $1" || return 1
-  $PSQL -d "$1" -f "$HERE/stand_in.sql" -f "$2" -f "$SUPA/seed/sample.sql" -f "$HERE/helpers.sql" || return 1
+  $PSQL -d "$1" -f "$HERE/stand_in.sql" "${args[@]}" -f "$SUPA/seed/sample.sql" -f "$HERE/helpers.sql" || return 1
 }
 # run_suite <db>: every tests/sql/*.sql; prints failures, returns non-zero on any
 run_suite() {
@@ -41,7 +43,7 @@ run_suite() {
 # the harness reads notices: psql -q still prints NOTICE lines to stderr, captured above via 2>&1
 
 echo "== build database =="
-build_db main "$SUPA/migrations/0001_init.sql" || { echo "migration/seed failed"; exit 1; }
+build_db main "$SUPA/migrations" || { echo "migration/seed failed"; exit 1; }
 echo "== tests =="
 run_suite main || fail=1
 
@@ -50,25 +52,33 @@ n=$($PSQL -d main -Atc "select count(*) from public.lots") ; [ "$n" = 150 ] || {
 
 if [ "${1:-}" != "--no-mutations" ]; then
   echo "== mutation checks (each must make the suite FAIL) =="
-  # name | perl substitution applied to a scratch copy of the migration
+  # name|migration file|perl substitution applied to a scratch copy of that migration
   mutations=(
-    "documents audience guard removed|s/\(not is_draft and \(audience = 'public' or \(audience = 'owners' and public.is_owner\(\)\)\)\)/true/"
-    "invoices policy opened to all|s/create policy invoices_select on public.invoices for select\s+using \(public.is_board\(\) or lot_id in \(select public.my_lot_ids\(\)\)\)/create policy invoices_select on public.invoices for select using (true)/"
-    "same-user check guard removed (function + constraint)|s/if v_row.logged_by = auth.uid\(\) then/if false then/; s/check \(deposit_confirmed_by is null or deposit_confirmed_by <> logged_by\),//"
-    "ledger external_ref unique removed|s/unique \(external_ref\)//; s/check \(kind not in \('charge','refund'\) or amount_cents >= 0\),/check (kind not in ('charge','refund') or amount_cents >= 0)/"
-    "former board member still counts as board|s/ and b\.active\)/)/"
-    "claim rate limit removed|s/if v_recent >= 5 then/if false then/"
-    "lot_balances subtracts processing payments|s/ and not \(e\.status = 'processing' and e\.amount_cents < 0\)//"
+    "documents audience guard removed|0003_access.sql|s/or audience = 'public'\s+or \(audience = 'owners' and public\.is_owner\(\)\)/or true/"
+    "invoices policy opened to all|0001_init.sql|s/create policy invoices_select on public.invoices for select\s+using \(public.is_board\(\) or lot_id in \(select public.my_lot_ids\(\)\)\)/create policy invoices_select on public.invoices for select using (true)/"
+    "same-user check guard removed (function + constraint)|0001_init.sql|s/if v_row.logged_by = auth.uid\(\) then/if false then/; s/check \(deposit_confirmed_by is null or deposit_confirmed_by <> logged_by\),//"
+    "ledger external_ref unique removed|0001_init.sql|s/unique \(external_ref\)//; s/check \(kind not in \('charge','refund'\) or amount_cents >= 0\),/check (kind not in ('charge','refund') or amount_cents >= 0)/"
+    "former board member still counts as board|0001_init.sql|s/ and b\.active\)/)/"
+    "claim rate limit removed|0003_access.sql|s/if v_recent >= 5 then/if false then/"
+    "claim per-code limit removed|0003_access.sql|s/if v_recent >= 3 then/if false then/"
+    "claim global hourly cap removed|0003_access.sql|s/if v_recent >= 100 then/if false then/"
+    "lot_balances subtracts processing payments|0001_init.sql|s/ and not \(e\.status = 'processing' and e\.amount_cents < 0\)//"
+    "board_tasks direct update re-granted|0003_access.sql|s/revoke insert, update on public\.board_tasks from authenticated;//"
+    "default privileges left open to anon|0003_access.sql|s/revoke all on (tables|sequences|functions) from anon, authenticated/grant all on \$1 to anon, authenticated/g"
+    "storage read ignores document audience|0003_access.sql|s/or exists \(select 1 from public\.documents d where d\.storage_path = storage\.objects\.name\)/or true/"
+    "consent history not written|0003_access.sql|s/if v_old\.email_notice_consent is distinct from/if false and v_old.email_notice_consent is distinct from/"
+    "owner writes not audited|0003_access.sql|s/if auth\.uid\(\) is null and/if true or auth.uid() is null and/"
+    "roster link does not notify the board|0003_access.sql|s/where o\.id = any \(v_new\)/where false/"
   )
   i=0
   for m in "${mutations[@]}"; do
-    i=$((i+1)); name="${m%%|*}"; expr="${m#*|}"
-    cp "$SUPA/migrations/0001_init.sql" "$WORK/mut$i.sql"
-    perl -0pi -e "$expr" "$WORK/mut$i.sql"
-    if cmp -s "$SUPA/migrations/0001_init.sql" "$WORK/mut$i.sql"; then
+    i=$((i+1)); name="${m%%|*}"; rest="${m#*|}"; target="${rest%%|*}"; expr="${rest#*|}"
+    mkdir "$WORK/mut$i" && cp "$SUPA"/migrations/*.sql "$WORK/mut$i/"
+    perl -0pi -e "$expr" "$WORK/mut$i/$target"
+    if cmp -s "$SUPA/migrations/$target" "$WORK/mut$i/$target"; then
       echo "MUTATION NOT APPLIED: $name"; fail=1; continue
     fi
-    if ! build_db "mut$i" "$WORK/mut$i.sql" >/dev/null 2>&1; then
+    if ! build_db "mut$i" "$WORK/mut$i" >/dev/null 2>&1; then
       echo "MUTATION BROKE THE BUILD (does not prove the guard): $name"; fail=1; continue
     fi
     if run_suite "mut$i" >"$WORK/mut$i.out" 2>&1; then

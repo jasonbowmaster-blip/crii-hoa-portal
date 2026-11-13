@@ -46,7 +46,7 @@ export default function Message() {
           <section className="card card--tint">
             <h2 className="row__title">We got your message</h2>
             <p className="sub">
-              Thanks, {session?.owner?.first_name ?? 'neighbor'}. Your {topicLabel(sentTopic).toLowerCase()} message is with the board.
+              Thanks, {session?.owner?.first_name || 'neighbor'}. Your {topicLabel(sentTopic).toLowerCase()} message is with the board.
               The board replies within 2 business days.
             </p>
             <button type="button" className="btn" onClick={() => setSentTopic(null)}>Send another</button>

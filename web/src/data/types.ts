@@ -208,7 +208,11 @@ export interface Session {
   user_id: string;
   email: string;
   owner: Owner | null;
-  lot: Lot | null;            // the owner's lot (first active one)
+  lot: Lot | null;            // the owner's lot (first active one); null = this sign-in is not linked to a home yet
+  // One sign-in can link to several owner records and lots (shared household email). Optional; the
+  // first entries match `owner` and `lot`. Absent means "just the one above".
+  owners?: Owner[];
+  lots?: Lot[];
   board: BoardMember | null;  // present only for active board members
 }
 

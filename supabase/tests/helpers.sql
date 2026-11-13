@@ -71,3 +71,6 @@ begin
   end if;
   raise notice 'ok - %', msg;
 end $$;
+
+-- The migrations revoke the default PUBLIC execute right on new functions; the test helpers must stay callable.
+grant execute on all functions in schema tests to public;

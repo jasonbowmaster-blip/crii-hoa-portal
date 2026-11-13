@@ -23,11 +23,9 @@ function one<T>(data: unknown): T {
   return (Array.isArray(data) ? data[0] : data) as T;
 }
 
-function lotState(balance: number, processing: number): LotRow['state'] {
-  if (balance < 0) return 'credit';
-  if (balance === 0) return processing > 0 ? 'processing' : 'paid';
-  return processing >= balance ? 'processing' : 'unpaid';
-}
+// The lot_balances view (SQL) is the one place that decides paid / unpaid / processing / credit for a lot.
+interface BalanceRow { lot_id: string; balance_cents: number; processing_cents?: number; state?: LotRow['state'] }
+const isPaid = (b: BalanceRow) => b.state === 'paid' || b.state === 'credit';   // same rule as the demo: credit counts as paid
 
 export function createSupabaseApi(url: string, anonKey: string): PortalApi {
   const sb: SupabaseClient = createClient(url, anonKey);
@@ -36,16 +34,26 @@ export function createSupabaseApi(url: string, anonKey: string): PortalApi {
     const { data } = await sb.auth.getSession();
     const user = data.session?.user;
     if (!user) return null;
-    const ownerRes = await sb.from('owners').select('*').eq('user_id', user.id).maybeSingle();
-    const owner = (ownerRes.data as Owner | null) ?? null;
-    let lot: Lot | null = null;
-    if (owner) {
-      const links = await sb.from('lot_owners').select('lot_id, ends_on').eq('owner_id', owner.id).is('ends_on', null);
-      const lotId = (links.data ?? [])[0]?.lot_id;
-      if (lotId) lot = ((await sb.from('lots').select('*').eq('id', lotId).maybeSingle()).data as Lot | null) ?? null;
+    // One sign-in may be linked to several owner records and lots (a shared household email). Never use
+    // .single() here: it errors on more than one row and would make the person look unlinked.
+    const ownerRes = await sb.from('owners').select('*').eq('user_id', user.id).order('id', { ascending: true });
+    const owners = (ownerRes.data as Owner[] | null) ?? [];
+    const lots: Lot[] = [];
+    if (owners.length > 0) {
+      const today = new Date().toISOString().slice(0, 10);
+      const links = await sb.from('lot_owners').select('lot_id, starts_on, ends_on')
+        .in('owner_id', owners.map((o) => o.id)).lte('starts_on', today).order('starts_on', { ascending: true }).order('lot_id', { ascending: true });
+      const current = ((links.data ?? []) as { lot_id: string; ends_on: string | null }[]).filter((l) => !l.ends_on || l.ends_on >= today);
+      const ids = [...new Set(current.map((l) => l.lot_id))];
+      if (ids.length > 0) {
+        const lotRes = await sb.from('lots').select('*').in('id', ids);
+        const byId = new Map(((lotRes.data ?? []) as Lot[]).map((l) => [l.id, l]));
+        for (const id of ids) { const l = byId.get(id); if (l) lots.push(l); }
+      }
     }
-    const boardRes = await sb.from('board_members').select('*').eq('user_id', user.id).eq('active', true).maybeSingle();
-    return { user_id: user.id, email: user.email ?? '', owner, lot, board: (boardRes.data as BoardMember | null) ?? null };
+    const boardRes = await sb.from('board_members').select('*').eq('user_id', user.id).eq('active', true).limit(1);
+    const board = ((boardRes.data ?? []) as BoardMember[])[0] ?? null;
+    return { user_id: user.id, email: user.email ?? '', owner: owners[0] ?? null, lot: lots[0] ?? null, owners, lots, board };
   }
 
   async function requireSession(): Promise<Session> {
@@ -54,14 +62,18 @@ export function createSupabaseApi(url: string, anonKey: string): PortalApi {
     return s;
   }
 
-  async function getMyLedger(): Promise<{ entries: LedgerEntry[]; invoices: Invoice[] }> {
-    const s = await requireSession();
+  // Not linked to a lot: nothing to show, and the caller must not read "no rows" as "paid up".
+  async function ledgerFor(s: Session): Promise<{ entries: LedgerEntry[]; invoices: Invoice[] }> {
     if (!s.lot) return { entries: [], invoices: [] };
     const [entries, invoices] = await Promise.all([
       sb.from('ledger_entries').select('*').eq('lot_id', s.lot.id).order('posted_on', { ascending: false }),
       sb.from('invoices').select('*').eq('lot_id', s.lot.id).neq('status', 'draft').order('due_on', { ascending: false }),
     ]);
     return { entries: must(entries, 'ledger') as LedgerEntry[], invoices: must(invoices, 'invoices') as Invoice[] };
+  }
+
+  async function getMyLedger() {
+    return ledgerFor(await requireSession());
   }
 
   async function listDocuments(): Promise<DocumentItem[]> {
@@ -107,13 +119,15 @@ export function createSupabaseApi(url: string, anonKey: string): PortalApi {
     async getOwnerHome(): Promise<OwnerHome> {
       const session = await requireSession();
       const [ledger, events, announcements, documents] = await Promise.all([
-        getMyLedger(),
+        ledgerFor(session),
         sb.from('events').select('*').gte('starts_at', new Date().toISOString()).order('starts_at', { ascending: true }).limit(1),
         sb.from('announcements').select('*').order('posted_at', { ascending: false }).limit(5),
-        sb.from('documents').select('*').eq('is_draft', false).order('posted_on', { ascending: false }).limit(3),
+        // Drafts are shown too (marked Draft): draft minutes must be available to owners. Row-level security hides board-only files.
+        sb.from('documents').select('*').order('posted_on', { ascending: false }).limit(3),
       ]);
       return {
         session,
+        // With no linked lot this is a meaningless zero; the screens show "not linked yet" instead (see session.lot).
         balance: summarizeBalance(ledger.entries, ledger.invoices),
         next_event: ((must(events, 'events') as HoaEvent[])[0]) ?? null,
         announcements: must(announcements, 'announcements') as Announcement[],
@@ -148,8 +162,9 @@ export function createSupabaseApi(url: string, anonKey: string): PortalApi {
 
     async listMyMessages() {
       const s = await requireSession();
-      if (!s.owner) return [];
-      return must(await sb.from('messages').select('*').eq('owner_id', s.owner.id).order('created_at', { ascending: false }), 'messages') as Message[];
+      const ids = (s.owners ?? (s.owner ? [s.owner] : [])).map((o) => o.id);
+      if (ids.length === 0) return [];
+      return must(await sb.from('messages').select('*').in('owner_id', ids).order('created_at', { ascending: false }), 'messages') as Message[];
     },
 
     async updateNoticePrefs({ email_notice_consent, board_notice_request }) {
@@ -169,13 +184,13 @@ export function createSupabaseApi(url: string, anonKey: string): PortalApi {
         listTasks(),
         sb.from('messages').select('*').gte('created_at', weekAgo),
       ]);
-      const bal = must(balances, 'balances') as { balance_cents: number; processing_cents?: number }[];
+      const bal = must(balances, 'balances') as BalanceRow[];
       const msgs = must(messages, 'messages') as Message[];
       const waiting = msgs.filter((m) => OPEN_STATUSES.includes(m.status));
       const nowIso = new Date().toISOString();
       return {
         lots_total: lots.count ?? 0,
-        lots_paid: bal.filter((b) => lotState(b.balance_cents, b.processing_cents ?? 0) === 'paid').length,
+        lots_paid: bal.filter(isPaid).length,
         owners_signed_in: owners.count ?? 0,
         open_tasks: tasks.filter((t) => t.status === 'open'),
         messages_this_week: {
@@ -201,7 +216,7 @@ export function createSupabaseApi(url: string, anonKey: string): PortalApi {
         sb.from('lot_owners').select('lot_id, owners(*)').is('ends_on', null),
         sb.from('lot_balances').select('*'),
       ]);
-      const balByLot = new Map((must(balances, 'balances') as { lot_id: string; balance_cents: number; processing_cents?: number }[]).map((b) => [b.lot_id, b]));
+      const balByLot = new Map((must(balances, 'balances') as BalanceRow[]).map((b) => [b.lot_id, b]));
       const ownersByLot = new Map<string, Owner[]>();
       for (const l of (must(links, 'owners') as unknown as { lot_id: string; owners: Owner | null }[])) {
         if (!l.owners) continue;
@@ -209,8 +224,7 @@ export function createSupabaseApi(url: string, anonKey: string): PortalApi {
       }
       const rows: LotRow[] = (must(lots, 'lots') as Lot[]).map((lot) => {
         const b = balByLot.get(lot.id);
-        const balance = b?.balance_cents ?? 0;
-        return { lot, owners: ownersByLot.get(lot.id) ?? [], balance_cents: balance, state: lotState(balance, b?.processing_cents ?? 0) };
+        return { lot, owners: ownersByLot.get(lot.id) ?? [], balance_cents: b?.balance_cents ?? 0, state: b?.state ?? 'unpaid' };
       });
       const q = query?.trim().toLowerCase();
       if (!q) return rows;
