@@ -32,24 +32,28 @@ Deno.serve(async (req) => {
   const params = { year, amount_cents: amount, due_on };
 
   // Reads go through the caller's token; a board member's RLS lets them read everything needed.
-  const [lots, lotOwners, balances, posted] = await Promise.all([
+  const [lots, lotOwners, balances, posted, processingNow] = await Promise.all([
     asUser.from('lots').select('id, lot_number, street_address, status'),
     asUser.from('lot_owners').select('lot_id, owners(id, full_name, email, mailing_address, email_notice_consent)').is('ends_on', null),
-    asUser.from('lot_balances').select('lot_id, balance_cents'),
+    asUser.from('lot_balances').select('lot_id, balance_cents, processing_cents'),
     asUser.from('ledger_entries').select('lot_id, amount_cents').like('external_ref', `inv:${year}-%`),
+    // bank payments still processing against THIS year's invoices (a re-run must not flag its own invoice)
+    asUser.from('ledger_entries').select('lot_id, amount_cents, invoices!inner(number)')
+      .eq('status', 'processing').lt('amount_cents', 0).like('invoices.number', `${year}-%`),
   ]);
-  if (lots.error || lotOwners.error || balances.error || posted.error) return json({ error: 'Could not read the roster.' }, 500);
+  if (lots.error || lotOwners.error || balances.error || posted.error || processingNow.error) return json({ error: 'Could not read the roster.' }, 500);
 
   const owners = (lotOwners.data ?? []).flatMap((r: any) => (r.owners ? [{ lot_id: r.lot_id, owner: r.owners }] : []));
   const run = buildBillRun(lots.data ?? [], owners, balances.data ?? [], params,
-    (posted.data ?? []).map((r: any) => ({ lot_id: r.lot_id, balance_cents: r.amount_cents })));
+    (posted.data ?? []).map((r: any) => ({ lot_id: r.lot_id, balance_cents: r.amount_cents })),
+    (processingNow.data ?? []).map((r: any) => ({ lot_id: r.lot_id, balance_cents: -r.amount_cents })));
 
   if (body?.dry_run === true) return json(toPreview(run, params));
 
   const service = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
   const drafts = run.drafts.map((d) => ({
     lot_id: d.lot_id, number: d.number, description: d.description, due_on: d.due_on,
-    assessment_cents: d.amount_cents, total_cents: d.total_cents,
+    assessment_cents: d.amount_cents, total_cents: d.total_cents, processing_cents: d.processing_cents,
   }));
   const today = new Date().toISOString().slice(0, 10);
   const { data: saved, error } = await service.rpc('apply_bill_run', { p_posted_on: today, p_drafts: drafts });

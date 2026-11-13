@@ -130,6 +130,44 @@ describe('payment lifecycles', () => {
     expect(balance(db).balance_cents).toBe(0);
   });
 
+  describe('disputes', () => {
+    const paidByCard = (db: SimDb) => feed(db, ev('invoice.paid', { id: 'in_1', amount_paid: 17500, payment_intent: 'pi_1' }),
+      ev('charge.dispute.created', { amount: 17500, payment_intent: 'pi_1' }));
+    it('a lost dispute stays returned', () => {
+      const db = start(); paidByCard(db);
+      feed(db, ev('charge.dispute.closed', { amount: 17500, payment_intent: 'pi_1', status: 'lost' }));
+      expect(paymentRows(db)[0].status).toBe('returned');
+      expect(balance(db)).toMatchObject({ balance_cents: 17500, state: 'unpaid' });
+      expect(db.invoices[0].status).toBe('open');
+    });
+    it('a won dispute clears the payment again, once, and a replay or a second closed event changes nothing', () => {
+      const db = start(); paidByCard(db);
+      expect(balance(db).balance_cents).toBe(17500);
+      const won = ev('charge.dispute.closed', { amount: 17500, payment_intent: 'pi_1', status: 'won' }, 'evt_won');
+      expect(applySim(db, mapStripeEvent(won))).toEqual({ applied: true });
+      expect(paymentRows(db)).toHaveLength(1);
+      expect(paymentRows(db)[0]).toMatchObject({ status: 'cleared', description: 'Payment received' });
+      expect(balance(db)).toMatchObject({ balance_cents: 0, state: 'paid' });
+      expect(db.invoices[0].status).toBe('paid');
+      expect(applySim(db, mapStripeEvent(won))).toMatchObject({ applied: false, duplicate: true });
+      feed(db, ev('charge.dispute.closed', { amount: 17500, payment_intent: 'pi_1', status: 'won' }));
+      expect(balance(db)).toMatchObject({ balance_cents: 0, state: 'paid' });
+      expect(db.tasks).toHaveLength(1);    // only the one from the dispute opening
+    });
+    it('a won dispute with no disputed payment does not mark the invoice paid', () => {
+      const db = start();
+      feed(db, ev('charge.dispute.closed', { amount: 17500, payment_intent: 'pi_1', status: 'won', invoice: 'in_1' }));
+      expect(db.invoices[0].status).toBe('open');
+      expect(balance(db).balance_cents).toBe(17500);
+    });
+    it('a bank-returned payment is not revived by a dispute event', () => {
+      const db = start();
+      feed(db, ev('payment_intent.payment_failed', { id: 'pi_1', amount: 17500, invoice: 'in_1', payment_method_types: ACH }),
+        ev('charge.dispute.closed', { amount: 17500, payment_intent: 'pi_1', status: 'won' }));
+      expect(paymentRows(db)[0].status).toBe('returned');
+    });
+  });
+
   it('an event for a payment we cannot place yet is not recorded, so the retry can apply it', () => {
     const db = start();
     const first = applySim(db, mapStripeEvent(ev('charge.dispute.created', { amount: 1, payment_intent: 'pi_unknown' }, 'evt_x')));

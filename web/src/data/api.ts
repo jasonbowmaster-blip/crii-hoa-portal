@@ -40,6 +40,7 @@ export interface PortalApi {
   replyWithTemplate(messageId: string, templateId: string): Promise<Message>;
   logCheck(input: { lot_id: string; check_number: string; amount_cents: number; received_on: string }): Promise<CheckRecord>;
   confirmCheckDeposit(checkId: string, outcome: 'deposited' | 'returned'): Promise<CheckRecord>; // refused if same person who logged it
+  markCheckReturned(checkId: string, note?: string): Promise<CheckRecord>; // a DEPOSITED check the bank sent back: reopens the invoice, opens a task
   previewBillRun(input: { year: number; amount_cents: number; due_on: string }): Promise<BillRunPreview>;
   postAnnouncement(input: { title: string; body: string; audience: Audience }): Promise<Announcement>;
   addDocument(input: { folder: DocumentFolder; title: string; audience: Audience; file: File | null; is_draft: boolean }): Promise<DocumentItem>;

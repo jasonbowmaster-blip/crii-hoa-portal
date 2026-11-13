@@ -26,4 +26,5 @@ export interface LotOwnerRow {
 export interface BalanceRow {
   lot_id: string;
   balance_cents: number;
+  processing_cents?: number;   // bank payments still processing (NOT part of balance_cents)
 }

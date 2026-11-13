@@ -110,6 +110,22 @@ describe('mapStripeEvent', () => {
     expect(c).toMatchObject({ payment_intent: 'pi_9', invoice_status: 'open', invoice_force: true });
     expect(c.tasks).toHaveLength(1);
   });
+  it('charge.dispute.closed won clears the payment again (reinstate) and settles the invoice', () => {
+    const c = mapStripeEvent(ev('charge.dispute.closed', { amount: 15000, payment_intent: 'pi_9', status: 'won' }));
+    expect(c.handled).toBe(true);
+    expect(c.ledger).toEqual([expect.objectContaining({ external_ref: 'pi_9', status: 'cleared', amount_cents: -15000, kind: 'payment', reinstate: true })]);
+    expect(c).toMatchObject({ payment_intent: 'pi_9', invoice_status: 'paid', invoice_force: true });
+    expect(c.tasks).toEqual([]);
+  });
+  it('charge.dispute.closed lost changes nothing but is still recorded', () => {
+    const c = mapStripeEvent(ev('charge.dispute.closed', { amount: 15000, payment_intent: 'pi_9', status: 'lost' }));
+    expect(c.handled).toBe(true);
+    expect(c.ledger).toEqual([]);
+    expect(c).toMatchObject({ invoice_status: null, invoice_force: false, payment_intent: 'pi_9' });
+  });
+  it('charge.dispute.closed needs a payment reference', () => {
+    expect(mapStripeEvent(ev('charge.dispute.closed', { amount: 1, status: 'won' })).ignored_reason).toBe('no_payment_reference');
+  });
   it('ignores unknown types', () => {
     expect(mapStripeEvent(ev('customer.created', { metadata: meta })).ignored_reason).toBe('event_type_not_used');
   });

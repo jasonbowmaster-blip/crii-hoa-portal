@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { buildBillRun, liveKeyRefused, toPreview } from './bill-run.ts';
 import type { LotOwnerRow, LotRecord } from './types.ts';
+import { summarizeBalance } from '../../../web/src/lib/ledger';
+import type { LedgerEntry } from '../../../web/src/data/types';
 
 const lots: LotRecord[] = [
   { id: 'a', lot_number: 42, street_address: '1 Oak Ln', status: 'active' },
@@ -37,7 +39,7 @@ describe('buildBillRun', () => {
     expect(by(100).delivery).toBe('paper'); // consent but no address
   });
   it('totals and preview shape', () => {
-    expect(run.totals).toEqual({ lots: 3, email: 1, paper: 2, billed_cents: 18000 + 20500 + 17000 });
+    expect(run.totals).toEqual({ lots: 3, email: 1, paper: 2, billed_cents: 18000 + 20500 + 17000, processing_cents: 0 });
     expect(toPreview(run, params).lots[0]).toMatchObject({ lot_number: 7, carried_cents: 2500, delivery: 'paper' });
   });
 });
@@ -63,5 +65,39 @@ describe('credits and re-runs', () => {
     const after = lots.map((l) => ({ lot_id: l.id, balance_cents: 18000 }));
     const posted = lots.map((l) => ({ lot_id: l.id, balance_cents: 18000 }));
     expect(buildBillRun(lots, owners, after, params, posted)).toEqual(first);
+  });
+});
+
+describe('bank payments still processing', () => {
+  // lot b owes 18000 (last year's dues) and has paid it by bank, still processing: lot_balances says 18000 owed, 18000 processing
+  const balances = [{ lot_id: 'b', balance_cents: 18000, processing_cents: 18000 }, { lot_id: 'a', balance_cents: 0, processing_cents: 0 }];
+  const run = buildBillRun(lots, owners, balances, params);
+  const b = run.drafts.find((d) => d.lot_number === 7)!;
+  it('does not subtract processing payments from the carried balance (same rule as lot_balances)', () => {
+    expect(b.carried_cents).toBe(18000);
+    expect(b.total_cents).toBe(36000);
+  });
+  it('reports them separately on the draft, the totals and the preview', () => {
+    expect(b.processing_cents).toBe(18000);
+    expect(run.drafts.find((d) => d.lot_number === 42)!.processing_cents).toBe(0);
+    expect(run.totals.processing_cents).toBe(18000);
+    expect(toPreview(run, params).lots.find((l) => l.lot_number === 7)).toMatchObject({ carried_cents: 18000, processing_cents: 18000 });
+    expect(toPreview(run, params).totals.processing_cents).toBe(18000);
+  });
+  it('matches the web app balance rule: the same entries give the same carried and processing amounts', () => {
+    const entries = [
+      { id: '1', lot_id: 'b', posted_on: '2026-02-01', kind: 'charge', description: 'x', detail: null, amount_cents: 18000, status: 'cleared', method: null, invoice_id: null, external_ref: null },
+      { id: '2', lot_id: 'b', posted_on: '2027-01-10', kind: 'payment', description: 'x', detail: null, amount_cents: -18000, status: 'processing', method: 'ach', invoice_id: null, external_ref: null },
+    ] as LedgerEntry[];
+    const s = summarizeBalance(entries, []);
+    expect([s.balance_cents, s.processing_cents]).toEqual([b.carried_cents, b.processing_cents]);
+  });
+  it('a processing payment on this year\'s own invoice is not flagged when the run is repeated', () => {
+    const after = [{ lot_id: 'b', balance_cents: 18000, processing_cents: 18000 }];      // charge posted 18000, paid by bank, processing
+    const posted = [{ lot_id: 'b', balance_cents: 18000 }];
+    const rerun = buildBillRun(lots, owners, after, params, posted, [{ lot_id: 'b', balance_cents: 18000 }]);
+    const d = rerun.drafts.find((x) => x.lot_number === 7)!;
+    expect(d).toMatchObject({ carried_cents: 0, processing_cents: 0, total_cents: 18000 });
+    expect(buildBillRun(lots, owners, after, params, posted, [{ lot_id: 'b', balance_cents: 18000 }])).toEqual(rerun);
   });
 });

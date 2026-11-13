@@ -244,6 +244,8 @@ export interface BillRunPreview {
   year: number;
   due_on: ISODate;
   amount_cents: Cents;
-  lots: { lot_id: string; lot_number: number; owner_name: string; carried_cents: Cents; total_cents: Cents; delivery: 'email' | 'paper' }[];
-  totals: { lots: number; email: number; paper: number; billed_cents: Cents };
+  lots: { lot_id: string; lot_number: number; owner_name: string; carried_cents: Cents; processing_cents?: Cents; total_cents: Cents; delivery: 'email' | 'paper' }[];
+  // processing_cents: bank payments still processing. NOT subtracted from carried/total (same rule as lot_balances);
+  // shown so the board can see who may be billed for money already on its way.
+  totals: { lots: number; email: number; paper: number; billed_cents: Cents; processing_cents?: Cents };
 }

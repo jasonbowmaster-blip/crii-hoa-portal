@@ -161,28 +161,51 @@ export function createDemoApi(opts: DemoOptions = {}): PortalApi {
     }
     check.state = outcome;
     check.deposit_confirmed_by = PAT_USER;
-    const entry: LedgerEntry = {
-      id: newId('le'), lot_id: check.lot_id, posted_on: nowISO().slice(0, 10), kind: 'payment',
-      description: `Check #${check.check_number}`,
-      detail: outcome === 'deposited' ? 'Deposit confirmed' : 'Not on the deposit',
-      amount_cents: -check.amount_cents, status: outcome === 'deposited' ? 'cleared' : 'returned',
-      method: 'check', invoice_id: null, external_ref: check.check_number,
-    };
-    state.ledger.push(entry);
     if (outcome === 'deposited') {
-      const summary = balanceOf(check.lot_id);
-      if (summary.balance_cents <= 0) {
-        for (const inv of state.invoices) {
-          if (inv.lot_id === check.lot_id && (inv.status === 'open' || inv.status === 'processing')) {
-            inv.status = 'paid'; inv.paid_outside_stripe = true;
-          }
-        }
-      }
+      // Settles the oldest open invoice the check covers (exact amount preferred), outside Stripe.
+      const inv = state.invoices
+        .filter((i) => i.lot_id === check.lot_id && i.status === 'open' && i.amount_cents <= check.amount_cents)
+        .sort((x, y) => Number(y.amount_cents === check.amount_cents) - Number(x.amount_cents === check.amount_cents)
+          || x.due_on.localeCompare(y.due_on) || x.number.localeCompare(y.number))[0];
+      state.ledger.push({
+        id: newId('le'), lot_id: check.lot_id, posted_on: nowISO().slice(0, 10), kind: 'payment',
+        description: `Check #${check.check_number}`, detail: 'Deposit confirmed',
+        amount_cents: -check.amount_cents, status: 'cleared', method: 'check', invoice_id: inv?.id ?? null,
+        external_ref: `check:${check.id}`,
+      });
+      if (inv) { inv.status = 'paid'; inv.paid_outside_stripe = true; }
     } else {
-      addTask({ kind: 'payment_returned', lot_id: check.lot_id, title: `Check #${check.check_number} was not on the deposit`, summary: 'The lot shows unpaid again. Contact the owner.', due_at: null, ref_id: check.id });
+      applyCheckReturn(check, null);
     }
-    finishTasksFor(check.id, PAT_USER);
+    for (const t of state.tasks) {   // only the confirm task: a payment_returned task for the same check stays open
+      if (t.kind === 'check_confirm' && t.ref_id === check.id && t.status === 'open') { t.status = 'done'; t.resolved_by = PAT_USER; t.resolved_at = nowISO(); }
+    }
     return clone(check);
+  }
+
+  // A returned check (mirrors apply_check_return in 0004_gaps.sql): its payment row becomes returned so the
+  // balance goes back up, the invoice it settled reopens, and a payment_returned task opens.
+  function applyCheckReturn(check: CheckRecord, note: string | null) {
+    const ref = `check:${check.id}`;
+    const row = state.ledger.find((e) => e.external_ref === ref);
+    let invoiceId: string | null = null;
+    if (row) {
+      row.status = 'returned'; row.detail = `Check #${check.check_number}, returned by the bank`;
+      invoiceId = row.invoice_id;
+    } else {
+      state.ledger.push({
+        id: newId('le'), lot_id: check.lot_id, posted_on: nowISO().slice(0, 10), kind: 'payment',
+        description: `Check #${check.check_number}`, detail: 'Not on the deposit',
+        amount_cents: -check.amount_cents, status: 'returned', method: 'check', invoice_id: null, external_ref: ref,
+      });
+    }
+    const inv = invoiceId ? state.invoices.find((i) => i.id === invoiceId) : undefined;
+    if (inv && inv.status === 'paid' && inv.paid_outside_stripe) { inv.status = 'open'; inv.paid_outside_stripe = false; }
+    addTask({
+      kind: 'payment_returned', lot_id: check.lot_id, title: `Check #${check.check_number} was returned`,
+      summary: `The check for ${formatCents(check.amount_cents)} did not clear. The lot shows unpaid again. Contact the owner.${note?.trim() ? ` Note: ${note.trim()}` : ''}`,
+      due_at: null, ref_id: check.id,
+    });
   }
 
   function useTemplate(messageId: string, templateId: string): Message {
@@ -348,14 +371,18 @@ export function createDemoApi(opts: DemoOptions = {}): PortalApi {
       const task = state.tasks.find((t) => t.id === id);
       if (!task) throw new Error('That task was not found.');
       if (task.status !== 'open') throw new Error('That task is already closed.');
+      // Same rule as the database: these two close only by a decision, never by dismissal.
+      if (action === 'dismiss' && (task.kind === 'check_confirm' || task.kind === 'claim_attach')) {
+        throw new Error('This task cannot be dismissed. Approve or reject it.');
+      }
       if (action === 'dismiss') {
         task.status = 'dismissed';
       } else if (task.kind === 'check_confirm') {
         // approve = it is on the deposit; reject = not on the deposit. May throw (two-person rule).
         confirmCheck(task.ref_id!, action === 'approve' ? 'deposited' : 'returned');
-        task.status = action === 'approve' ? 'done' : 'dismissed';
+        task.status = 'done';   // reject is still a decision
       } else if (action === 'reject') {
-        task.status = 'dismissed';
+        task.status = task.kind === 'claim_attach' ? 'done' : 'dismissed';
         const claim = task.kind === 'claim_attach' ? state.claims.find((c) => c.id === task.ref_id) : null;
         if (claim) claim.status = 'rejected';
       } else {
@@ -432,24 +459,38 @@ export function createDemoApi(opts: DemoOptions = {}): PortalApi {
       return c;
     },
 
+    async markCheckReturned(checkId, note) {
+      await wait(); requireBoard();
+      const check = state.checks.find((c) => c.id === checkId);
+      if (!check) throw new Error('That check was not found.');
+      if (check.state === 'returned') throw new Error('That check was already returned.');
+      if (check.state !== 'deposited') throw new Error('That check has not been deposited yet. Mark it as not on the deposit instead.');
+      check.state = 'returned';
+      applyCheckReturn(check, note ?? null);
+      save();
+      return clone(check);
+    },
+
     async previewBillRun(input): Promise<BillRunPreview> {
       await wait(); requireBoard();
       const yearInvoiceIds = new Set(state.invoices.filter((i) => i.number.startsWith(`${input.year}-`)).map((i) => i.id));
       const lots: BillRunPreview['lots'] = [];
-      let email = 0; let paper = 0; let billed = 0;
+      let email = 0; let paper = 0; let billed = 0; let processingTotal = 0;
       for (const lot of state.lots) {
         const owners = ownersOf(lot.id);
         const owner = owners[0];
         // Carried = what the lot already owes, not counting this year's own invoice and its payments.
         const carriedEntries = lotEntries(lot.id).filter((e) => !(e.invoice_id && yearInvoiceIds.has(e.invoice_id)));
-        const carried = summarizeBalance(carriedEntries, []).balance_cents;
+        const carriedSummary = summarizeBalance(carriedEntries, []);
+        const carried = carriedSummary.balance_cents;            // processing payments are NOT subtracted (as in lot_balances)
+        const processing = carriedSummary.processing_cents;     // shown separately so the board can see it
         const delivery = owner?.email_notice_consent && owner.email ? 'email' : 'paper';
         const total = carried + input.amount_cents;
-        lots.push({ lot_id: lot.id, lot_number: lot.lot_number, owner_name: owners.map((o) => o.full_name).join(' and '), carried_cents: carried, total_cents: total, delivery });
+        lots.push({ lot_id: lot.id, lot_number: lot.lot_number, owner_name: owners.map((o) => o.full_name).join(' and '), carried_cents: carried, processing_cents: processing, total_cents: total, delivery });
         if (delivery === 'email') email++; else paper++;
-        billed += total;
+        billed += total; processingTotal += processing;
       }
-      return { year: input.year, due_on: input.due_on, amount_cents: input.amount_cents, lots, totals: { lots: lots.length, email, paper, billed_cents: billed } };
+      return { year: input.year, due_on: input.due_on, amount_cents: input.amount_cents, lots, totals: { lots: lots.length, email, paper, billed_cents: billed, processing_cents: processingTotal } };
     },
 
     async postAnnouncement(input): Promise<Announcement> {

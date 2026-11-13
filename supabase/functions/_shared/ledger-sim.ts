@@ -33,9 +33,19 @@ export function applySim(db: SimDb, c: StripeChanges): { applied: boolean; dupli
   db.processed.add(c.event_id);
   if (inv && c.payment_intent && !inv.stripe_payment_intent_id) inv.stripe_payment_intent_id = c.payment_intent;
 
+  let reinstated = 0;
+  const reinstateAsked = c.ledger.some((l) => l.reinstate);
   const skipMoney = c.event_type === 'invoice.paid' && inv?.paid_outside_stripe;
   if (!skipMoney) {
     for (const l of c.ledger) {
+      if (l.reinstate) {
+        // a won dispute: only a payment row that a dispute returned goes back to cleared
+        const row = db.ledger.find((r) => r.external_ref === l.external_ref && r.lot_id === lot);
+        if (row && row.kind === 'payment' && row.status === 'returned' && row.description === 'Payment disputed') {
+          row.status = 'cleared'; row.description = l.description; reinstated++;
+        }
+        continue;
+      }
       const existing = db.ledger.find((r) => r.external_ref === l.external_ref);
       if (!existing) {
         db.ledger.push({ ...l, lot_id: lot, invoice_id: inv?.id ?? null });
@@ -45,11 +55,13 @@ export function applySim(db: SimDb, c: StripeChanges): { applied: boolean; dupli
       }
     }
   }
-  if (inv && c.invoice_status) {
+  // a won-dispute event that found nothing to reinstate must not mark the invoice paid
+  const invoiceStatus = reinstateAsked && reinstated === 0 ? null : c.invoice_status;
+  if (inv && invoiceStatus) {
     const returned = db.ledger.some((r) => r.external_ref === c.payment_intent && r.kind === 'payment' && r.status === 'returned');
-    if (inv.status === 'void' && c.invoice_status !== 'void') { /* never revive */ }
-    else if (c.invoice_force || c.invoice_status === 'void' || (invoiceRank[c.invoice_status] > invoiceRank[inv.status] && !returned)) {
-      inv.status = c.invoice_status;
+    if (inv.status === 'void' && invoiceStatus !== 'void') { /* never revive */ }
+    else if (c.invoice_force || invoiceStatus === 'void' || (invoiceRank[invoiceStatus] > invoiceRank[inv.status] && !returned)) {
+      inv.status = invoiceStatus;
     }
   }
   for (const t of c.tasks) db.tasks.push({ lot_id: lot, kind: t.kind });

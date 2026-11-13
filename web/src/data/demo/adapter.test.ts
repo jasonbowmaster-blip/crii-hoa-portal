@@ -166,6 +166,63 @@ describe('checks and the two-person rule', () => {
   });
 });
 
+describe('dismiss and returned checks (same rules as 0004_gaps.sql)', () => {
+  it('dismiss cannot close a check_confirm or a claim_attach task, but can close others', async () => {
+    const api = make('board');
+    await expect(api.resolveTask('task-chk', 'dismiss')).rejects.toThrow(/cannot be dismissed/);
+    expect((await api.listTasks()).find((t) => t.id === 'task-chk')!.status).toBe('open');
+    expect((await api.resolveTask('task-q61', 'dismiss')).status).toBe('dismissed');
+    // a claim task
+    const owner = make('owner');
+    await owner.redeemClaimCode(DEMO_CLAIM_CODE);
+    const claimTask = (await make('board').listTasks()).find((t) => t.kind === 'claim_attach')!;
+    await expect(make('board').resolveTask(claimTask.id, 'dismiss')).rejects.toThrow(/cannot be dismissed/);
+    expect((await make('board').listClaimRequests())[0].status).toBe('pending');
+  });
+  it('a check marked not on the deposit leaves a returned row and a payment_returned task, balance unchanged', async () => {
+    const api = make('board');
+    const before = (await api.listLots('23')).find((r) => r.lot.lot_number === 23)!.balance_cents;
+    const t = await api.resolveTask('task-chk', 'reject');
+    expect(t.status).toBe('done');
+    const after = (await api.listLots('23')).find((r) => r.lot.lot_number === 23)!;
+    expect(after.balance_cents).toBe(before);
+    expect((await api.listTasks()).some((x) => x.kind === 'payment_returned' && x.ref_id === 'chk-1042' && x.status === 'open')).toBe(true);
+  });
+  it('a deposited check that bounces: balance back up, invoice reopens, task opens', async () => {
+    const api = make('board');
+    await api.resolveTask('task-chk', 'approve');
+    const paid = (await api.listLots('23')).find((r) => r.lot.lot_number === 23)!;
+    expect(paid.state).toBe('paid');
+    await expect(api.markCheckReturned('chk-nope')).rejects.toThrow(/not found/);
+    const c = await api.markCheckReturned('chk-1042', 'NSF');
+    expect(c.state).toBe('returned');
+    const row = (await api.listLots('23')).find((r) => r.lot.lot_number === 23)!;
+    expect(row.state).toBe('unpaid');
+    expect(row.balance_cents).toBe(17500);
+    const task = (await api.listTasks()).find((x) => x.kind === 'payment_returned' && x.ref_id === 'chk-1042')!;
+    expect(task.status).toBe('open');
+    expect(task.summary).toContain('NSF');
+    await expect(api.markCheckReturned('chk-1042')).rejects.toThrow(/already returned/);
+  });
+  it('a bounced check reopens the invoice it settled', async () => {
+    const api = make('board');
+    const c = await api.logCheck({ lot_id: 'lot-042', check_number: '3001', amount_cents: 20000, received_on: '2027-01-13' });
+    await api.confirmCheckDeposit(c.id, 'deposited');
+    expect((await api.getMyLedger()).invoices.some((i) => i.status === 'open')).toBe(false);
+    await api.markCheckReturned(c.id);
+    const { invoices, entries } = await api.getMyLedger();
+    expect(invoices.filter((i) => i.status === 'open')).toHaveLength(1);
+    expect(entries.find((e) => e.external_ref === `check:${c.id}`)!.status).toBe('returned');
+    expect((await api.getOwnerHome()).balance.state).toBe('unpaid');
+  });
+  it('a check that was never deposited cannot be marked returned this way', async () => {
+    await expect(make('board').markCheckReturned('chk-1042')).rejects.toThrow(/not been deposited/);
+  });
+  it('owners cannot mark a check returned', async () => {
+    await expect(make('owner').markCheckReturned('chk-881')).rejects.toThrow(/board members only/);
+  });
+});
+
 describe('claim codes', () => {
   it('accepts the sample code once, creating a claim and a task', async () => {
     const api = make('board');
@@ -207,6 +264,22 @@ describe('bill run preview', () => {
     await api.updateNoticePrefs({ email_notice_consent: true, board_notice_request: false });
     const p = await api.previewBillRun({ year: 2027, amount_cents: 17500, due_on: '2027-05-15' });
     expect(p.lots.find((l) => l.lot_number === 42)!.delivery).toBe('email');
+  });
+});
+
+describe('bill run and payments still processing', () => {
+  it('does not subtract a processing payment from the carried balance, but shows it separately', async () => {
+    const owner = make('owner');
+    const inv = (await owner.getMyLedger()).invoices.find((i) => i.status === 'open')!;
+    await owner.getPayLink(inv.id);                        // starts a bank payment that is still processing
+    const p = await make('board').previewBillRun({ year: 2028, amount_cents: 18000, due_on: '2028-05-15' });
+    const pat = p.lots.find((l) => l.lot_number === 42)!;
+    expect(pat.processing_cents).toBe(inv.amount_cents);
+    expect(pat.carried_cents).toBe(inv.amount_cents + 2500);   // still owed until it clears
+    expect(pat.total_cents).toBe(18000 + inv.amount_cents + 2500);
+    expect(p.totals.processing_cents).toBe(p.lots.reduce((n, l) => n + (l.processing_cents ?? 0), 0));
+    expect(p.totals.processing_cents).toBeGreaterThanOrEqual(inv.amount_cents);
+    expect(p.lots.find((l) => l.lot_number === 1)!.processing_cents).toBe(0);
   });
 });
 

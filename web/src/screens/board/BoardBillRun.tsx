@@ -47,14 +47,20 @@ export default function BoardBillRun() {
             <p className="row__meta">
               {preview.totals.lots} lots · {preview.totals.email} by email · {preview.totals.paper} on paper · Total billed {formatCents(preview.totals.billed_cents)}
             </p>
+            {(preview.totals.processing_cents ?? 0) > 0 && (
+              <p className="notice" role="note">
+                {formatCents(preview.totals.processing_cents ?? 0)} in bank payments is still processing. It is not taken off the carried
+                balance until it clears, so a lot with a Processing amount may be billed for money that is already on its way. Check those lots first.
+              </p>
+            )}
             <div className="table-scroll">
               <table className="data">
-                <thead><tr><th>Lot</th><th>Owner</th><th>Carried</th><th>Total</th><th>Delivery</th></tr></thead>
+                <thead><tr><th>Lot</th><th>Owner</th><th>Carried</th><th>Processing</th><th>Total</th><th>Delivery</th></tr></thead>
                 <tbody>
                   {preview.lots.map((l) => (
                     <tr key={l.lot_id}>
                       <td>{l.lot_number}</td><td>{l.owner_name}</td>
-                      <td>{formatCents(l.carried_cents)}</td><td>{formatCents(l.total_cents)}</td>
+                      <td>{formatCents(l.carried_cents)}</td><td>{(l.processing_cents ?? 0) > 0 ? formatCents(l.processing_cents ?? 0) : '–'}</td><td>{formatCents(l.total_cents)}</td>
                       <td>{l.delivery === 'email' ? 'Email' : 'Paper'}</td>
                     </tr>
                   ))}

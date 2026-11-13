@@ -79,6 +79,9 @@ export interface LedgerUpsert {
   amount_cents: number;             // payments negative, refunds positive
   status: PaymentStatus;
   method: PayMethod | null;
+  // true: the ONE allowed backward move. A won dispute puts a payment that a dispute returned back to cleared.
+  // The database only does it for a row still marked 'Payment disputed'.
+  reinstate?: boolean;
 }
 
 export interface TaskInsert {
@@ -240,6 +243,21 @@ export function mapStripeEvent(event: StripeEvent): StripeChanges {
         kind: 'payment_returned', title: 'Payment disputed',
         summary: `A payment of ${dollars(amount)} dollars was disputed with the card issuer. The lot is unpaid again.`,
       });
+      return out;
+    }
+    case 'charge.dispute.closed': {
+      // Won (or an inquiry closed with no dispute): the money was never lost, so the payment clears again.
+      // Lost: the payment stays returned, which charge.dispute.created already recorded. Nothing to change,
+      // but the event is still recorded (handled) so a replay is a duplicate.
+      const refused = needRef(); if (refused) return refused;
+      if (obj.status === 'won' || obj.status === 'warning_closed') {
+        const amount = Math.abs(obj.amount ?? 0);
+        out.ledger.push({
+          external_ref: out.payment_intent ?? `dispute:${obj.id}`, posted_on: date, kind: 'payment',
+          description: 'Payment received', detail: null, amount_cents: -amount, status: 'cleared', method: 'card', reinstate: true,
+        });
+        out.invoice_status = 'paid'; out.invoice_force = true;
+      }
       return out;
     }
     default:

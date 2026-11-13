@@ -263,6 +263,12 @@ export function createSupabaseApi(url: string, anonKey: string): PortalApi {
       return one<CheckRecord>(data);
     },
 
+    async markCheckReturned(checkId, note) {
+      const { data, error } = await sb.rpc('mark_check_returned', { p_check_id: checkId, p_note: note ?? null });
+      if (error) throw new Error(error.message);
+      return one<CheckRecord>(data);
+    },
+
     async previewBillRun({ year, amount_cents, due_on }) {
       const { data, error } = await sb.functions.invoke('bill-run', { body: { dry_run: true, year, amount_cents, due_on } });
       if (error) throw new Error(error.message);
