@@ -10,7 +10,9 @@ async function boot() {
     const { createSupabaseApi } = await import('./data/supabase/adapter');
     setApi(createSupabaseApi(config.supabaseUrl, config.supabaseAnonKey));
   } else {
-    const { createDemoApi } = await import('./data/demo/adapter');
+    const { createDemoApi, DEMO_NOW } = await import('./data/demo/adapter');
+    const { setAppNow } = await import('./lib/clock');
+    setAppNow(DEMO_NOW);
     setApi(createDemoApi());
   }
   createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>);

@@ -1,3 +1,4 @@
+import { appNow } from '../../lib/clock';
 import { getApi } from '../../data/api';
 import type { HoaEvent } from '../../data/types';
 import { useAsync } from '../../components/useAsync';
@@ -7,7 +8,7 @@ import { dayNum, monthAbbr, monthTitle, weekdayTime } from '../../components/dat
 
 export default function Calendar() {
   const { data, error, loading } = useAsync(() => getApi().listEvents());
-  const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+  const startOfToday = appNow(); startOfToday.setHours(0, 0, 0, 0);
   const upcoming = (data ?? [])
     .filter((e) => new Date(e.starts_at) >= startOfToday)
     .sort((a, b) => a.starts_at.localeCompare(b.starts_at));

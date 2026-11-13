@@ -1,3 +1,4 @@
+import { appNow } from '../../lib/clock';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getApi } from '../../data/api';
@@ -35,7 +36,7 @@ function choicesFor(kind: TaskKind): [Choice, Choice] {
 
 function flagFor(t: BoardTask): { text: string; warn: boolean } | null {
   if (t.due_at) {
-    const n = businessDaysBetween(new Date().toISOString(), t.due_at);
+    const n = businessDaysBetween(appNow().toISOString(), t.due_at);
     return { text: `${n} business day${n === 1 ? '' : 's'} left`, warn: n < 3 };
   }
   if (t.kind === 'check_confirm') return { text: 'Needs a second person', warn: true };

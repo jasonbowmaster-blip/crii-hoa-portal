@@ -2,6 +2,7 @@ import type { ReactElement } from 'react';
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { SessionProvider, useSession } from './session';
 import { config } from './config';
+import DemoToolbar from './DemoToolbar';
 
 // Owner screens (owned by the owner-UI lane)
 import SignIn from './screens/owner/SignIn';
@@ -32,8 +33,8 @@ function Guard({ children, board = false }: { children: ReactElement; board?: bo
 export default function App() {
   return (
     <SessionProvider>
-      {config.dataMode === 'demo' && <div className="demo-banner" role="note">Preview with sample data. Nothing here is real or sent.</div>}
       <HashRouter>
+        {config.dataMode === 'demo' && <DemoToolbar />}
         <Routes>
           <Route path="/sign-in" element={<SignIn />} />
           <Route path="/claim" element={<Guard><ClaimCode /></Guard>} />

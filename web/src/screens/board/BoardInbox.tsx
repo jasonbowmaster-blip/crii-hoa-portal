@@ -1,3 +1,4 @@
+import { appNow } from '../../lib/clock';
 import { useEffect, useState } from 'react';
 import { getApi } from '../../data/api';
 import type { Message, MessageStatus, MessageTopic, ReplyTemplate } from '../../data/types';
@@ -9,14 +10,14 @@ const TOPICS: MessageTopic[] = ['question', 'maintenance', 'arb', 'billing', 're
 const label = (s: string) => { const t = s.replace(/_/g, ' '); return t[0].toUpperCase() + t.slice(1); };
 
 function age(iso: string): string {
-  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  const days = Math.floor((appNow().getTime() - new Date(iso).getTime()) / 86400000);
   return days <= 0 ? 'today' : `${days} day${days === 1 ? '' : 's'} ago`;
 }
 
 function MessageRow({ m, templates, lotNumber, onReplied }: { m: Message; templates: ReplyTemplate[]; lotNumber?: number; onReplied: (m: Message) => void }) {
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
-  const left = m.due_at && m.topic === 'records' ? businessDaysBetween(new Date().toISOString(), m.due_at) : null;
+  const left = m.due_at && m.topic === 'records' ? businessDaysBetween(appNow().toISOString(), m.due_at) : null;
 
   async function reply(templateId: string) {
     if (!templateId) return;
@@ -39,13 +40,13 @@ function MessageRow({ m, templates, lotNumber, onReplied }: { m: Message; templa
           Due {m.due_at!.slice(0, 10)} · {left} business day{left === 1 ? '' : 's'} left
         </p>
       )}
-      <label className="field">
+      {!['answered', 'closed'].includes(m.status) && <label className="field">
         Reply with template
         <select className="input" value="" onChange={(e) => reply(e.target.value)}>
           <option value="">Choose a template</option>
           {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
         </select>
-      </label>
+      </label>}
       <p className="board-ok" role="status">{msg}</p>
       {err && <p className="error" role="alert">{err}</p>}
     </section>

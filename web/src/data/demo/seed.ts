@@ -151,7 +151,7 @@ function msg(over: Partial<Message> & Pick<Message, 'id' | 'lot_id' | 'topic' | 
 
 function buildMessages(): Message[] {
   const out: Message[] = [
-    msg({ id: 'msg-pat-1', lot_id: lotId(42), topic: 'question', subject: 'Where do I find the pool rules?', body: 'Where do I find the pool rules?', status: 'answered', created_at: '2026-12-02T16:00:00Z', answered_at: '2026-12-03T14:00:00Z', assigned_to: SAM_USER }),
+    msg({ id: 'msg-pat-1', lot_id: lotId(42), topic: 'question', subject: 'Where do I find the fence rules?', body: 'Where do I find the fence rules?', status: 'answered', created_at: '2026-12-02T16:00:00Z', answered_at: '2026-12-03T14:00:00Z', assigned_to: SAM_USER }),
     // Four waiting this week, matching the board mock-up.
     msg({ id: 'msg-61', lot_id: lotId(61), topic: 'question', subject: 'When is the next board meeting?', body: 'When is the next board meeting?', status: 'new', created_at: '2027-01-12T21:00:00Z' }),
     msg({ id: 'msg-88', lot_id: lotId(88), topic: 'billing', subject: 'Asks to split dues into two payments', body: 'Could we pay our dues in two payments this year?', status: 'draft_waiting', created_at: '2027-01-12T18:00:00Z' }),
@@ -198,9 +198,9 @@ function buildDocuments(): DocumentItem[] {
 
 function buildEvents(): HoaEvent[] {
   return [
-    { id: 'ev-board-jan', title: 'Board meeting', kind: 'board_meeting', starts_at: '2027-01-20T00:00:00Z', location: 'Clubhouse', video_url: 'https://example.com/demo-meeting', notes: 'Tuesday, January 19, 7:00 PM. Owners are welcome.', is_public: true },
+    { id: 'ev-board-jan', title: 'Board meeting', kind: 'board_meeting', starts_at: '2027-01-20T00:00:00Z', location: '[Meeting place]', video_url: 'https://example.com/demo-meeting', notes: 'Tuesday, January 19, 7:00 PM. Owners are welcome.', is_public: true },
     { id: 'ev-tree', title: 'Tree work along Sample Lane', kind: 'tree_work', starts_at: '2027-01-26T13:00:00Z', location: 'Sample Lane', video_url: null, notes: 'Crews will trim trees along the common area. Please move cars off the street by 8:00 AM.', is_public: true },
-    { id: 'ev-board-feb', title: 'Board meeting', kind: 'board_meeting', starts_at: '2027-02-17T00:00:00Z', location: 'Clubhouse', video_url: 'https://example.com/demo-meeting', notes: null, is_public: true },
+    { id: 'ev-board-feb', title: 'Board meeting', kind: 'board_meeting', starts_at: '2027-02-17T00:00:00Z', location: '[Meeting place]', video_url: 'https://example.com/demo-meeting', notes: null, is_public: true },
     { id: 'ev-annual', title: 'Annual meeting', kind: 'annual_meeting', starts_at: '2027-03-16T23:00:00Z', location: 'Community center', video_url: null, notes: 'Election of directors and the 2027 budget report.', is_public: true },
     { id: 'ev-dues', title: '2027 annual assessment due', kind: 'dues_date', starts_at: '2027-05-15T04:00:00Z', location: null, video_url: null, notes: null, is_public: true },
   ];
