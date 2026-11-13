@@ -1,7 +1,10 @@
 // Stripe webhook logic, kept free of Deno and network code so Vitest can test it.
-// Money is integer cents. Idempotency: every insert carries an external_ref that
-// is unique per Stripe event (or the payment id for rows that later get updated),
-// so a replayed event cannot post twice.
+// Money is integer cents.
+// One ledger row per payment, keyed by the PaymentIntent id (external_ref). Later events
+// for the same payment (settled, returned, disputed) carry the SAME key, and the database
+// function apply_stripe_event moves that row forward (processing -> cleared -> returned)
+// instead of adding a second one. Refunds are one row per refund id. Duplicate events are
+// ignored by the database through the processed_events table.
 
 const encoder = new TextEncoder();
 
@@ -63,47 +66,50 @@ export interface StripeEvent {
 }
 
 export type PayMethod = 'ach' | 'card' | 'check' | 'other';
+export type PaymentStatus = 'processing' | 'cleared' | 'returned';
+export type InvoiceStatus = 'open' | 'processing' | 'paid' | 'void';
 
-export interface LedgerInsert {
-  lot_id: string;
+// Insert the row, or move the existing row with this external_ref forward.
+export interface LedgerUpsert {
+  external_ref: string;             // PaymentIntent id (payments) or Refund id (refunds)
   posted_on: string;
-  kind: 'payment' | 'refund' | 'charge' | 'credit';
+  kind: 'payment' | 'refund';
   description: string;
   detail: string | null;
-  amount_cents: number;
-  status: 'processing' | 'cleared' | 'returned';
+  amount_cents: number;             // payments negative, refunds positive
+  status: PaymentStatus;
   method: PayMethod | null;
-  stripe_invoice_id: string | null; // handler resolves this to invoice_id
-  external_ref: string;             // idempotency key
-}
-
-export interface LedgerUpdate { external_ref: string; status: 'returned' }
-
-export interface InvoiceUpdate {
-  stripe_invoice_id: string;
-  status: 'open' | 'processing' | 'paid' | 'void';
 }
 
 export interface TaskInsert {
   kind: 'payment_returned';
-  lot_id: string;
   title: string;
   summary: string;
-  ref_id: string;                   // event id, doubles as the task's idempotency key
 }
 
+// The payload of the database function apply_stripe_event. The lot is NOT here:
+// the database finds it through our invoices (stripe_invoice_id / payment_intent).
+// lot_hint is only a last resort from Stripe metadata.
 export interface StripeChanges {
   event_id: string;
+  event_type: string;
   handled: boolean;
   ignored_reason?: string;
-  ledger_inserts: LedgerInsert[];
-  ledger_updates: LedgerUpdate[];
-  invoice_updates: InvoiceUpdate[];
+  stripe_invoice_id: string | null;
+  payment_intent: string | null;
+  lot_hint: string | null;
+  ledger: LedgerUpsert[];
+  invoice_status: InvoiceStatus | null;
+  invoice_force: boolean;           // true: a return or dispute may move the invoice back to open
   tasks: TaskInsert[];
 }
 
 function empty(event: StripeEvent, handled: boolean, ignored_reason?: string): StripeChanges {
-  return { event_id: event.id, handled, ignored_reason, ledger_inserts: [], ledger_updates: [], invoice_updates: [], tasks: [] };
+  return {
+    event_id: event.id, event_type: event.type, handled, ignored_reason,
+    stripe_invoice_id: null, payment_intent: null, lot_hint: null,
+    ledger: [], invoice_status: null, invoice_force: false, tasks: [],
+  };
 }
 
 function postedOn(event: StripeEvent): string {
@@ -118,94 +124,133 @@ function methodOf(obj: Record<string, any>): PayMethod {
   return types.includes('us_bank_account') ? 'ach' : 'card';
 }
 
-// The lot is carried in Stripe metadata that the bill run sets (metadata.lot_id).
-function lotOf(obj: Record<string, any>): string | null {
-  return obj.metadata?.lot_id ?? null;
-}
+const idOf = (v: unknown): string | null =>
+  typeof v === 'string' && v ? v : (v && typeof v === 'object' && typeof (v as any).id === 'string' ? (v as any).id : null);
+
+const dollars = (cents: number) => (cents / 100).toFixed(2);
 
 export function mapStripeEvent(event: StripeEvent): StripeChanges {
   const obj = event.data?.object ?? {};
   const out = empty(event, true);
-  const lot_id = lotOf(obj);
-  if (!lot_id) return empty(event, false, 'missing_lot_metadata');
   const date = postedOn(event);
+  out.lot_hint = obj.metadata?.lot_id ?? null;
+
+  // Which of our records this event is about. Each event type names them differently.
+  const isInvoice = event.type.startsWith('invoice.');
+  out.stripe_invoice_id = isInvoice ? idOf(obj.id) : idOf(obj.invoice);
+  out.payment_intent = event.type.startsWith('payment_intent.') ? idOf(obj.id) : idOf(obj.payment_intent);
+
+  const needRef = () => {
+    if (!out.stripe_invoice_id && !out.payment_intent && !out.lot_hint) return empty(event, false, 'no_payment_reference');
+    return null;
+  };
 
   switch (event.type) {
     case 'invoice.paid': {
-      out.ledger_inserts.push({
-        lot_id, posted_on: date, kind: 'payment', description: 'Payment received',
-        detail: obj.number ? `Invoice ${obj.number}` : null,
-        amount_cents: -Math.abs(obj.amount_paid ?? 0), status: 'cleared', method: methodOf(obj),
-        stripe_invoice_id: obj.id ?? null, external_ref: event.id,
+      const refused = needRef(); if (refused) return refused;
+      const amount = Math.abs(obj.amount_paid ?? 0);
+      if (amount > 0) {
+        out.ledger.push({
+          // card: the PaymentIntent row (new). ACH: the same row that is processing now.
+          external_ref: out.payment_intent ?? `invoice:${obj.id}`,
+          posted_on: date, kind: 'payment', description: 'Payment received',
+          detail: obj.number ? `Invoice ${obj.number}` : null,
+          amount_cents: -amount, status: 'cleared', method: methodOf(obj),
+        });
+      }
+      out.invoice_status = 'paid';
+      return out;
+    }
+    case 'payment_intent.succeeded': {
+      const refused = needRef(); if (refused) return refused;
+      out.ledger.push({
+        external_ref: obj.id, posted_on: date, kind: 'payment', description: 'Payment received',
+        detail: obj.metadata?.invoice_number ? `Invoice ${obj.metadata.invoice_number}` : null,
+        amount_cents: -Math.abs(obj.amount_received ?? obj.amount ?? 0), status: 'cleared', method: methodOf(obj),
       });
-      if (obj.id) out.invoice_updates.push({ stripe_invoice_id: obj.id, status: 'paid' });
+      out.invoice_status = 'paid';
       return out;
     }
     case 'invoice.payment_failed': {
       // The invoice stays open; nothing posts to the ledger.
-      if (obj.id) out.invoice_updates.push({ stripe_invoice_id: obj.id, status: 'open' });
+      const refused = needRef(); if (refused) return refused;
+      out.invoice_status = 'open';
       return out;
     }
     case 'invoice.voided': {
-      if (obj.id) out.invoice_updates.push({ stripe_invoice_id: obj.id, status: 'void' });
+      const refused = needRef(); if (refused) return refused;
+      out.invoice_status = 'void';
       return out;
     }
     case 'payment_intent.processing': {
       // Bank payments take days. Shown as "processing", not yet subtracted from the balance.
-      out.ledger_inserts.push({
-        lot_id, posted_on: date, kind: 'payment', description: 'Bank payment processing',
+      const refused = needRef(); if (refused) return refused;
+      out.ledger.push({
+        external_ref: obj.id, posted_on: date, kind: 'payment', description: 'Bank payment processing',
         detail: obj.metadata?.invoice_number ? `Invoice ${obj.metadata.invoice_number}` : null,
         amount_cents: -Math.abs(obj.amount ?? 0), status: 'processing', method: 'ach',
-        stripe_invoice_id: obj.invoice ?? null, external_ref: obj.id, // payment id, so a later return can find it
       });
-      if (obj.invoice) out.invoice_updates.push({ stripe_invoice_id: obj.invoice, status: 'processing' });
+      out.invoice_status = 'processing';
       return out;
     }
     case 'payment_intent.payment_failed': {
-      // A bank payment that failed AFTER it was processing is an ACH return.
-      // A plain card decline is not a ledger event.
+      // A failed bank payment is an ACH return. A plain card decline is not a ledger event.
       if (methodOf(obj) !== 'ach') return empty(event, false, 'not_an_ach_return');
+      const refused = needRef(); if (refused) return refused;
       const amount = Math.abs(obj.amount ?? 0);
-      out.ledger_updates.push({ external_ref: obj.id, status: 'returned' });
-      out.ledger_inserts.push({
-        lot_id, posted_on: date, kind: 'payment', description: 'Bank payment returned',
+      out.ledger.push({
+        external_ref: obj.id, posted_on: date, kind: 'payment', description: 'Bank payment returned',
         detail: obj.last_payment_error?.message ? 'The bank returned this payment' : null,
         amount_cents: -amount, status: 'returned', method: 'ach',
-        stripe_invoice_id: obj.invoice ?? null, external_ref: event.id,
       });
-      if (obj.invoice) out.invoice_updates.push({ stripe_invoice_id: obj.invoice, status: 'open' });
+      out.invoice_status = 'open'; out.invoice_force = true;
       out.tasks.push({
-        kind: 'payment_returned', lot_id, title: 'Bank payment returned',
-        summary: `A bank payment of ${(amount / 100).toFixed(2)} dollars was returned. The lot is unpaid again.`,
-        ref_id: event.id,
+        kind: 'payment_returned', title: 'Bank payment returned',
+        summary: `A bank payment of ${dollars(amount)} dollars was returned. The lot is unpaid again.`,
       });
+      return out;
+    }
+    case 'refund.created':
+    case 'refund.updated':
+    case 'charge.refund.updated': {
+      // obj is a Refund: its own id and its own amount (not the running total).
+      const refused = needRef(); if (refused) return refused;
+      out.ledger.push(refundRow(obj, date));
       return out;
     }
     case 'charge.refunded': {
-      out.ledger_inserts.push({
-        lot_id, posted_on: date, kind: 'refund', description: 'Refund',
-        detail: null, amount_cents: Math.abs(obj.amount_refunded ?? 0), status: 'cleared',
-        method: methodOf(obj), stripe_invoice_id: obj.invoice ?? null, external_ref: event.id,
-      });
+      // obj is the Charge. Post each refund it lists, by refund id, with that refund's amount.
+      const refunds: Record<string, any>[] = obj.refunds?.data ?? [];
+      if (refunds.length === 0) return empty(event, false, 'refund_details_missing');
+      const refused = needRef(); if (refused) return refused;
+      for (const r of refunds) out.ledger.push(refundRow({ ...r, metadata: r.metadata ?? obj.metadata }, date, methodOf(obj)));
       return out;
     }
     case 'charge.dispute.created': {
-      // A dispute pulls the money back: the original payment stops counting.
+      // A dispute pulls the money back: the original payment row becomes returned.
+      // The dispute names the PaymentIntent; our invoice (and so the lot) is found from it.
+      const refused = needRef(); if (refused) return refused;
       const amount = Math.abs(obj.amount ?? 0);
-      if (obj.payment_intent) out.ledger_updates.push({ external_ref: obj.payment_intent, status: 'returned' });
-      out.ledger_inserts.push({
-        lot_id, posted_on: date, kind: 'payment', description: 'Payment disputed',
-        detail: null, amount_cents: -amount, status: 'returned', method: 'card',
-        stripe_invoice_id: null, external_ref: event.id,
+      out.ledger.push({
+        external_ref: out.payment_intent ?? `dispute:${obj.id}`, posted_on: date, kind: 'payment',
+        description: 'Payment disputed', detail: null, amount_cents: -amount, status: 'returned', method: 'card',
       });
+      out.invoice_status = 'open'; out.invoice_force = true;
       out.tasks.push({
-        kind: 'payment_returned', lot_id, title: 'Payment disputed',
-        summary: `A payment of ${(amount / 100).toFixed(2)} dollars was disputed with the card issuer. The lot is unpaid again.`,
-        ref_id: event.id,
+        kind: 'payment_returned', title: 'Payment disputed',
+        summary: `A payment of ${dollars(amount)} dollars was disputed with the card issuer. The lot is unpaid again.`,
       });
       return out;
     }
     default:
       return empty(event, false, 'event_type_not_used');
   }
+}
+
+function refundRow(r: Record<string, any>, date: string, method: PayMethod | null = null): LedgerUpsert {
+  const failed = r.status === 'failed' || r.status === 'canceled';
+  return {
+    external_ref: r.id, posted_on: date, kind: 'refund', description: 'Refund', detail: null,
+    amount_cents: Math.abs(r.amount ?? 0), status: failed ? 'returned' : 'cleared', method,
+  };
 }

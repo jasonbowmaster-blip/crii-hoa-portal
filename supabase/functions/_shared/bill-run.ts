@@ -12,7 +12,8 @@ export interface InvoiceDraft {
   due_on: string;
   amount_cents: number;        // this year's assessment only
   carried_cents: number;       // balance carried from before (may be negative = credit)
-  total_cents: number;
+  total_cents: number;         // what the owner is asked to pay; never below 0
+  credit_left_cents: number;   // credit still left after this year's dues (0 when none)
   lines: { description: string; amount_cents: number }[];
   delivery: 'email' | 'paper';
   email_to: string | null;     // set only when delivery is 'email'
@@ -29,8 +30,13 @@ export function billRunKey(year: number, lotNumber: number): string {
 
 // Email only when an owner of the lot has elected electronic notice AND has an address.
 // Everyone else gets paper.
-export function buildBillRun(lots: LotRecord[], owners: LotOwnerRow[], balances: BalanceRow[], params: BillRunParams): BillRun {
+// `posted` is what this year's run already put in the ledger (the charge rows), so a re-run
+// does not count its own charge as a carried balance.
+export function buildBillRun(
+  lots: LotRecord[], owners: LotOwnerRow[], balances: BalanceRow[], params: BillRunParams, posted: BalanceRow[] = [],
+): BillRun {
   const balanceByLot = new Map(balances.map((b) => [b.lot_id, b.balance_cents]));
+  for (const p of posted) balanceByLot.set(p.lot_id, (balanceByLot.get(p.lot_id) ?? 0) - p.balance_cents);
   const sorted = [...lots].sort((a, b) => a.lot_number - b.lot_number);
   const drafts: InvoiceDraft[] = sorted.map((lot) => {
     const lotOwners = owners.filter((o) => o.lot_id === lot.id).map((o) => o.owner);
@@ -50,7 +56,9 @@ export function buildBillRun(lots: LotRecord[], owners: LotOwnerRow[], balances:
       due_on: params.due_on,
       amount_cents: params.amount_cents,
       carried_cents: carried,
-      total_cents: params.amount_cents + carried,
+      // A credit bigger than the dues gives a zero invoice, not a negative one.
+      total_cents: Math.max(0, params.amount_cents + carried),
+      credit_left_cents: Math.max(0, -(params.amount_cents + carried)),
       lines,
       delivery: emailOwner ? 'email' : 'paper',
       email_to: emailOwner ? emailOwner.email : null,
