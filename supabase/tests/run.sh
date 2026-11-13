@@ -118,6 +118,17 @@ if [ "${1:-}" != "--no-mutations" ]; then
     "send_message limit counts other owners' messages|0006_grok.sql|s/and m\.owner_id in \(select o\.id from public\.owners o where o\.user_id = auth\.uid\(\)\);/;/g"
     "voided invoice is not reversed|0006_grok.sql|s/if v_unpaid > 0 then/if false then/"
     "paid invoice is reversed when voided|0006_grok.sql|s/and v_inv\.status not in \('paid', 'void'\) then/then/"
+    "invoice can be re-pointed to another Stripe invoice|0007_e2e.sql|s/if v_inv\.stripe_invoice_id is not null and v_inv\.stripe_invoice_id <> p_stripe_invoice_id then/if false then/"
+    "lot can get a second Stripe customer|0007_e2e.sql|s/if v_existing is not null and v_existing <> p_stripe_customer_id then/if false then/"
+    "linked draft invoice stays draft|0007_e2e.sql|s/status = case when status = 'draft' then 'open' else status end/status = status/"
+    "stripe_customers readable by signed-in users|0007_e2e.sql|s/revoke all on public\.stripe_customers from public, anon, authenticated;/grant select on public.stripe_customers to authenticated;/"
+    "record_stripe_invoice executable by everyone|0007_e2e.sql|s/grant execute on function public\.record_stripe_invoice\(uuid, text, text\) to service_role;/grant execute on function public.record_stripe_invoice(uuid, text, text) to public;/"
+    "non-https payment link accepted|0007_e2e.sql|s/p_hosted_invoice_url !~ '\^https:\/\/'/false/"
+    "skipped install reports itself as installed|0007_e2e.sql|s/return 'skipped: pg_cron, pg_net or Vault is not available here';/return 'installed';/"
+    "nightly export moved off 08:15 UTC|0007_e2e.sql|s/'15 8 \* \* \*'/'15 9 * * *'/"
+    "outbox drain not scheduled|0007_e2e.sql|s/perform cron\.schedule\('hoa-stripe-outbox'[^\n]*\n//"
+    "inbox trigger failure blocks the message|0007_e2e.sql|s/raise warning 'message-to-inbox not queued: %', sqlerrm;/raise;/"
+    "service key hard-coded in the job|0007_e2e.sql|s/\|\| \(select decrypted_secret from vault\.decrypted_secrets where name = 'service_role_key'\)\),\n      body := '\{\}'/|| 'stand-in-service-key'),\n      body := '{}'/"
   )
   i=0
   for m in "${mutations[@]}"; do
