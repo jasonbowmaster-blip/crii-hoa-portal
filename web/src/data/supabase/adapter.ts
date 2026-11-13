@@ -93,7 +93,7 @@ export function createSupabaseApi(url: string, anonKey: string): PortalApi {
     },
 
     async redeemClaimCode(code) {
-      const { data, error } = await sb.rpc('redeem_claim_code', { code });
+      const { data, error } = await sb.rpc('redeem_claim_code', { p_code: code });
       if (error) return { ok: false, message: error.message };
       const row = one<{ ok?: boolean; message?: string } | null>(data);
       return { ok: row?.ok ?? true, message: row?.message ?? 'Your home is now linked to your account.' };
@@ -141,7 +141,7 @@ export function createSupabaseApi(url: string, anonKey: string): PortalApi {
     listEvents,
 
     async sendMessage({ topic, body }) {
-      const { data, error } = await sb.rpc('send_message', { topic, body });
+      const { data, error } = await sb.rpc('send_message', { p_topic: topic, p_body: body });
       if (error) throw new Error(error.message);
       return one<Message>(data);
     },
@@ -153,7 +153,7 @@ export function createSupabaseApi(url: string, anonKey: string): PortalApi {
     },
 
     async updateNoticePrefs({ email_notice_consent, board_notice_request }) {
-      const { data, error } = await sb.rpc('update_notice_prefs', { email_notice_consent, board_notice_request });
+      const { data, error } = await sb.rpc('update_notice_prefs', { p_email_notice_consent: email_notice_consent, p_board_notice_request: board_notice_request });
       if (error) throw new Error(error.message);
       return one<Owner>(data);
     },
@@ -190,7 +190,7 @@ export function createSupabaseApi(url: string, anonKey: string): PortalApi {
     listTasks,
 
     async resolveTask(id, action, note) {
-      const { data, error } = await sb.rpc('resolve_task', { task_id: id, action, note: note ?? null });
+      const { data, error } = await sb.rpc('resolve_task', { p_task_id: id, p_action: action, p_note: note ?? null });
       if (error) throw new Error(error.message);
       return one<BoardTask>(data);
     },
@@ -238,13 +238,13 @@ export function createSupabaseApi(url: string, anonKey: string): PortalApi {
     },
 
     async logCheck({ lot_id, check_number, amount_cents, received_on }) {
-      const { data, error } = await sb.rpc('log_check', { lot_id, check_number, amount_cents, received_on });
+      const { data, error } = await sb.rpc('log_check', { p_lot_id: lot_id, p_check_number: check_number, p_amount_cents: amount_cents, p_received_on: received_on });
       if (error) throw new Error(error.message);
       return one<CheckRecord>(data);
     },
 
     async confirmCheckDeposit(checkId, outcome) {
-      const { data, error } = await sb.rpc('confirm_check_deposit', { check_id: checkId, outcome });
+      const { data, error } = await sb.rpc('confirm_check_deposit', { p_check_id: checkId, p_outcome: outcome });
       if (error) throw new Error(error.message);
       return one<CheckRecord>(data);
     },
