@@ -3,11 +3,19 @@
 // the number) and posts each lot's yearly charge to the ledger, once. Creating Stripe invoices and sending mail is a later step and is
 // NOT done here. Test mode only: refuses sk_live_ keys unless ALLOW_LIVE=true.
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { buildBillRun, liveKeyRefused, toPreview } from '../_shared/bill-run.ts';
-
-const json = (body: unknown, status = 200) => Response.json(body, { status });
+import { buildBillRun, liveKeyRefused, summarizeYearRows, toPreview, type YearLedgerRow } from '../_shared/bill-run.ts';
+import { corsHeaders, preflight } from '../_shared/cors.ts';
+import { fetchAllRows } from '../_shared/export.ts';
 
 Deno.serve(async (req) => {
+  // CORS on every answer, from PORTAL_ORIGIN (not '*'); the browser's OPTIONS preflight is answered first.
+  const origin = req.headers.get('Origin');
+  const portalOrigin = Deno.env.get('PORTAL_ORIGIN');
+  const json = (body: unknown, status = 200) => Response.json(body, { status, headers: corsHeaders(origin, portalOrigin) });
+  if (req.method === 'OPTIONS') {
+    const p = preflight(origin, portalOrigin);
+    return new Response(null, { status: p.status, headers: p.headers });
+  }
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
   if (liveKeyRefused(Deno.env.get('STRIPE_SECRET_KEY'), Deno.env.get('ALLOW_LIVE'))) {
     return json({ error: 'Live payment keys are not allowed here yet.' }, 403);
@@ -32,21 +40,39 @@ Deno.serve(async (req) => {
   const params = { year, amount_cents: amount, due_on };
 
   // Reads go through the caller's token; a board member's RLS lets them read everything needed.
-  const [lots, lotOwners, balances, posted, processingNow] = await Promise.all([
-    asUser.from('lots').select('id, lot_number, street_address, status'),
-    asUser.from('lot_owners').select('lot_id, owners(id, full_name, email, mailing_address, email_notice_consent)').is('ends_on', null),
-    asUser.from('lot_balances').select('lot_id, balance_cents, processing_cents'),
-    asUser.from('ledger_entries').select('lot_id, amount_cents').like('external_ref', `inv:${year}-%`),
-    // bank payments still processing against THIS year's invoices (a re-run must not flag its own invoice)
-    asUser.from('ledger_entries').select('lot_id, amount_cents, invoices!inner(number)')
-      .eq('status', 'processing').lt('amount_cents', 0).like('invoices.number', `${year}-%`),
+  // Every read is paged (PostgREST returns at most 1000 rows per request).
+  const today = new Date().toISOString().slice(0, 10);
+  const all = <T>(table: string, columns: string, order: string[], filter: (q: any) => any = (q) => q) =>
+    fetchAllRows<T>((from, to) => {
+      let q = asUser.from(table).select(columns);
+      q = filter(q);
+      for (const col of order) q = q.order(col, { ascending: true });
+      return q.range(from, to);
+    }).catch(() => null);
+  const [lots, lotOwners, balances, chargeRows, invoiceRows] = await Promise.all([
+    all<any>('lots', 'id, lot_number, street_address, status', ['id']),
+    // current owners: started, and not past their last day
+    all<any>('lot_owners', 'lot_id, owner_id, owners(id, full_name, email, mailing_address, email_notice_consent)', ['lot_id', 'owner_id', 'starts_on'],
+      (q) => q.lte('starts_on', today).or(`ends_on.is.null,ends_on.gte.${today}`)),
+    all<any>('lot_balances', 'lot_id, balance_cents, processing_cents', ['lot_id']),
+    // this year's own rows, so a re-run or a preview after the run does not carry them forward again:
+    // the charges (they exist even for a credit-only lot with no invoice) ...
+    all<any>('ledger_entries', 'id, lot_id, amount_cents, status, external_ref', ['id'], (q) => q.like('external_ref', `inv:${year}-%`)),
+    // ... and every payment, credit or refund linked to one of this year's invoices
+    all<any>('ledger_entries', 'id, lot_id, amount_cents, status, external_ref, invoices!inner(number)', ['id'], (q) => q.like('invoices.number', `${year}-%`)),
   ]);
-  if (lots.error || lotOwners.error || balances.error || posted.error || processingNow.error) return json({ error: 'Could not read the roster.' }, 500);
+  if (!lots || !lotOwners || !balances || !chargeRows || !invoiceRows) return json({ error: 'Could not read the roster.' }, 500);
 
-  const owners = (lotOwners.data ?? []).flatMap((r: any) => (r.owners ? [{ lot_id: r.lot_id, owner: r.owners }] : []));
-  const run = buildBillRun(lots.data ?? [], owners, balances.data ?? [], params,
-    (posted.data ?? []).map((r: any) => ({ lot_id: r.lot_id, balance_cents: r.amount_cents })),
-    (processingNow.data ?? []).map((r: any) => ({ lot_id: r.lot_id, balance_cents: -r.amount_cents })));
+  const owners = lotOwners.flatMap((r: any) => (r.owners ? [{ lot_id: r.lot_id, owner: r.owners }] : []));
+  const seen = new Set<string>();
+  const yearRows: YearLedgerRow[] = [...chargeRows, ...invoiceRows].flatMap((r: any) => {
+    if (seen.has(r.id)) return [];
+    seen.add(r.id);
+    const inv = Array.isArray(r.invoices) ? r.invoices[0] : r.invoices;
+    return [{ lot_id: r.lot_id, amount_cents: r.amount_cents, status: r.status, external_ref: r.external_ref ?? null, invoice_number: inv?.number ?? null }];
+  });
+  const { posted, processing } = summarizeYearRows(yearRows, year);
+  const run = buildBillRun(lots, owners, balances, params, posted, processing);
 
   if (body?.dry_run === true) return json(toPreview(run, params));
 
@@ -54,8 +80,8 @@ Deno.serve(async (req) => {
   const drafts = run.drafts.map((d) => ({
     lot_id: d.lot_id, number: d.number, description: d.description, due_on: d.due_on,
     assessment_cents: d.amount_cents, total_cents: d.total_cents, processing_cents: d.processing_cents,
+    credit_left_cents: d.credit_left_cents,
   }));
-  const today = new Date().toISOString().slice(0, 10);
   const { data: saved, error } = await service.rpc('apply_bill_run', { p_posted_on: today, p_drafts: drafts });
   if (error) return json({ error: 'Could not save the drafts.' }, 500);
   // Say honestly what happened: new invoices, ones that already existed, and any that differ.

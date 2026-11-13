@@ -11,7 +11,7 @@ select tests.eq((select owner_id from m), '10000000-0000-4000-8000-000000000042'
 select tests.ok((select due_at is null and status = 'new' and channel = 'portal' from m), 'plain question has no due date');
 
 select tests.as_user('a0000000-0000-4000-8000-000000000042');
-select tests.fails($$select public.send_message('question','x', '00000000-0000-4000-8000-000000000043')$$, 'does not exist', 'send_message has no lot parameter to forge');
+select tests.fails($$select public.send_message('question','x', '00000000-0000-4000-8000-000000000043')$$, 'not a current owner', 'send_message refuses a lot the caller does not own');
 select tests.fails($$insert into public.messages (lot_id, owner_id, topic, subject, body) values ('00000000-0000-4000-8000-000000000043','10000000-0000-4000-8000-000000000043','billing','forged','x')$$, 'permission denied|row-level', 'forged lot_id insert refused');
 select tests.fails($$select public.send_message('bogus','x')$$, 'unknown topic', 'bad topic refused');
 select tests.fails($$select public.send_message('question','   ')$$, '1 to 5000', 'empty body refused');

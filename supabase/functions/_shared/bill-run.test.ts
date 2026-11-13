@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildBillRun, liveKeyRefused, toPreview } from './bill-run.ts';
+import { buildBillRun, liveKeyRefused, summarizeYearRows, toPreview, type YearLedgerRow } from './bill-run.ts';
 import type { LotOwnerRow, LotRecord } from './types.ts';
 import { summarizeBalance } from '../../../web/src/lib/ledger';
 import type { LedgerEntry } from '../../../web/src/data/types';
@@ -39,7 +39,7 @@ describe('buildBillRun', () => {
     expect(by(100).delivery).toBe('paper'); // consent but no address
   });
   it('totals and preview shape', () => {
-    expect(run.totals).toEqual({ lots: 3, email: 1, paper: 2, billed_cents: 18000 + 20500 + 17000, processing_cents: 0 });
+    expect(run.totals).toEqual({ lots: 3, email: 1, paper: 2, billed_cents: 18000 + 20500 + 17000, processing_cents: 0, credit_only: 0 });
     expect(toPreview(run, params).lots[0]).toMatchObject({ lot_number: 7, carried_cents: 2500, delivery: 'paper' });
   });
 });
@@ -99,5 +99,68 @@ describe('bank payments still processing', () => {
     const d = rerun.drafts.find((x) => x.lot_number === 7)!;
     expect(d).toMatchObject({ carried_cents: 0, processing_cents: 0, total_cents: 18000 });
     expect(buildBillRun(lots, owners, after, params, posted, [{ lot_id: 'b', balance_cents: 18000 }])).toEqual(rerun);
+  });
+});
+
+describe('credit-only lots', () => {
+  const credit = (c: number) => buildBillRun(lots, owners, [{ lot_id: 'c', balance_cents: c }], params).drafts.find((x) => x.lot_number === 100)!;
+  it('a credit larger than the dues means no invoice, the credit is carried and listed in the preview', () => {
+    const run = buildBillRun(lots, owners, [{ lot_id: 'c', balance_cents: -25000 }], params);
+    const d = run.drafts.find((x) => x.lot_number === 100)!;
+    expect(d).toMatchObject({ no_invoice: true, total_cents: 0, credit_left_cents: 7000, carried_cents: -25000 });
+    expect(run.totals.credit_only).toBe(1);
+    expect(run.totals.billed_cents).toBe(18000 + 18000);   // lots 42 and 7 only
+    expect(toPreview(run, params).lots.find((l) => l.lot_number === 100)).toMatchObject({ no_invoice: true, credit_left_cents: 7000, total_cents: 0 });
+    expect(toPreview(run, params).totals.credit_only).toBe(1);
+  });
+  it('a credit exactly equal to the dues is a zero invoice, not credit-only', () => {
+    expect(credit(-18000)).toMatchObject({ no_invoice: false, total_cents: 0, credit_left_cents: 0 });
+  });
+  it('a smaller credit reduces the invoice', () => {
+    expect(credit(-1000)).toMatchObject({ no_invoice: false, total_cents: 17000, credit_left_cents: 0 });
+  });
+});
+
+describe('re-running after the run was posted and paid (no double counting)', () => {
+  const row = (lot_id: string, amount_cents: number, o: Partial<YearLedgerRow> = {}): YearLedgerRow =>
+    ({ lot_id, amount_cents, status: 'cleared', external_ref: null, invoice_number: null, ...o });
+  // lot b carried 2500 into 2027; the invoice was 20500 and has been paid in full.
+  const before = [{ lot_id: 'b', balance_cents: 2500 }];
+  const first = buildBillRun(lots, owners, before, params);
+  const afterRows = [
+    row('b', 18000, { external_ref: 'inv:2027-007', invoice_number: '2027-007' }),                 // the charge the run posted
+    row('b', -20500, { external_ref: 'pi_1', invoice_number: '2027-007' }),                        // paid in full
+    row('b', 2500, { external_ref: 'open:2027-007' }),                                              // an older row: not this year's
+    row('a', 99999, { external_ref: 'inv:2026-042', invoice_number: '2026-042' }),                  // last year's: not this year's
+  ];
+  it('leaves the charge AND this year\'s payments out of the carried balance', () => {
+    const { posted, processing } = summarizeYearRows(afterRows, 2027);
+    expect(posted).toEqual([{ lot_id: 'b', balance_cents: -2500 }]);
+    expect(processing).toEqual([]);
+    const balances = [{ lot_id: 'b', balance_cents: 0 }];             // lot_balances after the payment: 2500 + 18000 - 20500
+    const rerun = buildBillRun(lots, owners, balances, params, posted, processing);
+    expect(rerun.drafts.find((d) => d.lot_number === 7)).toMatchObject({ carried_cents: 2500, total_cents: 20500 });
+    expect(rerun).toEqual(first);
+  });
+  it('without the payment rows (charge only) the paid-up lot would wrongly show a credit; that is what summarizeYearRows prevents', () => {
+    const chargeOnly = [{ lot_id: 'b', balance_cents: 18000 }];
+    const wrong = buildBillRun(lots, owners, [{ lot_id: 'b', balance_cents: 0 }], params, chargeOnly);
+    expect(wrong.drafts.find((d) => d.lot_number === 7)!.carried_cents).toBe(-18000);
+  });
+  it('ignores returned rows, and counts processing payments separately', () => {
+    const { posted, processing } = summarizeYearRows([
+      row('b', 18000, { external_ref: 'inv:2027-007', invoice_number: '2027-007' }),
+      row('b', -18000, { external_ref: 'pi_2', invoice_number: '2027-007', status: 'returned' }),
+      row('b', -18000, { external_ref: 'pi_3', invoice_number: '2027-007', status: 'processing' }),
+    ], 2027);
+    expect(posted).toEqual([{ lot_id: 'b', balance_cents: 18000 }]);
+    expect(processing).toEqual([{ lot_id: 'b', balance_cents: 18000 }]);
+  });
+  it('counts the charge of a credit-only lot (no invoice behind it) through its external_ref', () => {
+    const { posted } = summarizeYearRows([row('c', 18000, { external_ref: 'inv:2027-100' })], 2027);
+    expect(posted).toEqual([{ lot_id: 'c', balance_cents: 18000 }]);
+    // credit 25000 carried; run posted 18000; lot_balances = -7000; the re-run still sees -25000 carried
+    const rerun = buildBillRun(lots, owners, [{ lot_id: 'c', balance_cents: -7000 }], params, posted);
+    expect(rerun.drafts.find((d) => d.lot_number === 100)).toMatchObject({ carried_cents: -25000, no_invoice: true });
   });
 });

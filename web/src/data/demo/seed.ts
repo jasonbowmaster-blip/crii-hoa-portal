@@ -182,7 +182,7 @@ const SAMPLE_DOCS: [DocumentItem['folder'], string, DocumentItem['audience'], st
   ['minutes', 'Board meeting minutes, November 2026', 'owners', '2026-12-08', false],
   ['minutes', 'Board meeting minutes, December 2026 (draft)', 'owners', '2027-01-06', true],
   ['minutes', 'Annual meeting minutes, 2026', 'owners', '2026-04-02', false],
-  ['board_packets', 'Annual meeting packet, 2026', 'owners', '2026-03-10', false],
+  ['minutes', 'Annual meeting packet, 2026', 'owners', '2026-03-10', false],   // board_packets are board-only (database rule), so this owner-facing packet lives with the minutes
   ['board_packets', 'Board packet, January 2027 (board only)', 'board', '2027-01-12', false],
   ['budgets', '2027 budget', 'owners', '2026-11-20', false],
   ['budgets', '2026 year-end financial summary', 'owners', '2027-01-08', false],
